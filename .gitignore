@@ -28,4 +28,4 @@ dist/
 # macOS
 .DS_Store
 
-*file.md
+/docs/file.md
