@@ -1,0 +1,14 @@
+from PySide6.QtWidgets import QApplication
+
+from lexlocal.bootstrap.application import create_application
+
+
+def test_application_can_be_created() -> None:
+    application, main_window = create_application(["lexlocal-test"])
+
+    assert isinstance(application, QApplication)
+    assert application.applicationName() == "LexLocal"
+    assert main_window.windowTitle() == "LexLocal"
+    assert main_window.centralWidget() is not None
+
+    main_window.close()
