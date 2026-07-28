@@ -5,7 +5,6 @@ import sqlite3
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations" / "001_initial.sql"
 NOW = "2026-07-27T00:00:00.000Z"
