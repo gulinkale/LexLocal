@@ -1,0 +1,47 @@
+# Release-candidate manifest template.
+# This is not verified release evidence while any TO_BE_* value remains.
+manifest_version: 1
+
+application:
+  version: TO_BE_ASSIGNED
+  python_version: "3.11.x"
+  macos_minimum: TO_BE_VERIFIED
+  architecture:
+    - arm64
+
+hardware:
+  reference_machine: TO_BE_RECORDED
+  minimum_apple_silicon_generation: TO_BE_VERIFIED
+  minimum_ram_gb: TO_BE_VERIFIED
+  recommended_ram_gb: TO_BE_VERIFIED
+  minimum_free_disk_without_models_gb: TO_BE_VERIFIED
+  minimum_free_disk_with_models_gb: TO_BE_VERIFIED
+
+dependencies:
+  pyside6: TO_BE_PINNED
+  qt: TO_BE_PINNED
+  numpy: TO_BE_PINNED
+  cryptography: TO_BE_PINNED
+  foundry_local_sdk: TO_BE_PINNED
+  foundry_local_runtime: TO_BE_PINNED
+  tesseract: TO_BE_PINNED
+
+models:
+  embedding:
+    requested_alias: qwen3-embedding-0.6b
+    resolved_model_id: TO_BE_VERIFIED
+    model_version: TO_BE_VERIFIED
+    dimensions: TO_BE_VERIFIED
+    runtime_provider: TO_BE_VERIFIED
+    verified_hardware: TO_BE_VERIFIED
+    verified_at: null
+    compatibility_result: TO_BE_VERIFIED
+
+  chat:
+    candidate_alias: qwen3-4b
+    resolved_model_id: TO_BE_VERIFIED
+    model_version: TO_BE_VERIFIED
+    runtime_provider: TO_BE_VERIFIED
+    verified_hardware: TO_BE_VERIFIED
+    verified_at: null
+    compatibility_result: TO_BE_VERIFIED
