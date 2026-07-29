@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Local-first legal document intelligence desktop application."
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "foundry-local-sdk>=1.2.3",
     "pyside6>=6.11.1",
 ]
 
