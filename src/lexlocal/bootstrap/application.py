@@ -2,6 +2,8 @@ from collections.abc import Sequence
 
 from PySide6.QtWidgets import QApplication
 
+from lexlocal.bootstrap.logging_setup import configure_logging
+from lexlocal.bootstrap.settings import load_settings
 from lexlocal.presentation.windows.main_window import MainWindow
 
 
@@ -29,7 +31,16 @@ def create_application(
 def run(argv: Sequence[str] | None = None) -> int:
     """Start the LexLocal desktop application."""
 
+    settings = load_settings()
+    logger = configure_logging(settings)
+
+    logger.info("Application starting")
+
     application, main_window = create_application(argv)
     main_window.show()
 
-    return application.exec()
+    exit_code = application.exec()
+
+    logger.info("Application stopped; exit_code=%d", exit_code)
+
+    return exit_code
