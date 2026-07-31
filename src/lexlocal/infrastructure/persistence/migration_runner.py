@@ -19,6 +19,10 @@ class MigrationHistoryError(RuntimeError):
     """Raised when migration files conflict with database history."""
 
 
+class MigrationExecutionError(RuntimeError):
+    """Raised when pending migrations cannot be applied."""
+
+
 def load_applied_migrations(
     connection: sqlite3.Connection,
 ) -> dict[int, AppliedMigration]:
@@ -77,3 +81,65 @@ def select_pending_migrations(
     return tuple(
         migration for migration in migrations if migration.version not in applied_migrations
     )
+
+
+def _sql_string_literal(value: str) -> str:
+    """Return a safely quoted SQLite string literal."""
+
+    escaped_value = value.replace("'", "''")
+    return f"'{escaped_value}'"
+
+
+def run_migrations(
+    connection: sqlite3.Connection,
+    migrations: tuple[Migration, ...],
+) -> tuple[Migration, ...]:
+    """Apply all pending migrations in one atomic transaction."""
+
+    applied_migrations = load_applied_migrations(connection)
+
+    pending_migrations = select_pending_migrations(
+        migrations,
+        applied_migrations,
+    )
+
+    if not pending_migrations:
+        return ()
+
+    script_parts = ["BEGIN IMMEDIATE;"]
+
+    for migration in pending_migrations:
+        script_parts.append(migration.sql)
+
+        script_parts.append(
+            f"""
+            INSERT INTO schema_migrations (
+                version,
+                filename,
+                checksum_sha256,
+                applied_at
+            )
+            VALUES (
+                {migration.version},
+                {_sql_string_literal(migration.filename)},
+                {_sql_string_literal(migration.checksum_sha256)},
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            );
+            """
+        )
+
+    script_parts.append("COMMIT;")
+
+    try:
+        connection.executescript("\n".join(script_parts))
+    except sqlite3.Error as exc:
+        if connection.in_transaction:
+            connection.rollback()
+
+        first_pending_version = pending_migrations[0].version
+
+        raise MigrationExecutionError(
+            f"Failed to apply pending migrations starting at version {first_pending_version}"
+        ) from exc
+
+    return pending_migrations

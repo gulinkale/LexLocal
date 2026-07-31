@@ -6,8 +6,10 @@ import pytest
 
 from lexlocal.infrastructure.persistence.migration_runner import (
     AppliedMigration,
+    MigrationExecutionError,
     MigrationHistoryError,
     load_applied_migrations,
+    run_migrations,
     select_pending_migrations,
 )
 from lexlocal.infrastructure.persistence.migrations import Migration
@@ -20,6 +22,7 @@ def make_migration(
     version: int,
     filename: str,
     checksum: str,
+    sql: str = "SELECT 1;",
 ) -> Migration:
     """Create a migration for focused unit tests."""
 
@@ -27,7 +30,7 @@ def make_migration(
         version=version,
         filename=filename,
         checksum_sha256=checksum,
-        sql="SELECT 1;",
+        sql=sql,
     )
 
 
@@ -176,3 +179,115 @@ def test_rejects_renamed_applied_migration() -> None:
         match="filename mismatch",
     ):
         select_pending_migrations((migration,), applied)
+
+
+def test_applies_pending_migrations_in_order_and_records_them(
+    tmp_path: Path,
+) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "lexlocal.db")
+    connection = factory.create()
+
+    first = make_migration(
+        1,
+        "001_initial.sql",
+        "checksum-1",
+        """
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY,
+            filename TEXT NOT NULL,
+            checksum_sha256 TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        );
+
+        CREATE TABLE example_records (
+            id INTEGER PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """,
+    )
+
+    second = make_migration(
+        2,
+        "002_insert_record.sql",
+        "checksum-2",
+        """
+        INSERT INTO example_records (value)
+        VALUES ('created-by-second-migration');
+        """,
+    )
+
+    try:
+        applied = run_migrations(
+            connection,
+            (first, second),
+        )
+
+        records = connection.execute(
+            """
+            SELECT value
+            FROM example_records
+            ORDER BY id
+            """
+        ).fetchall()
+
+        history = load_applied_migrations(connection)
+
+        applied_again = run_migrations(
+            connection,
+            (first, second),
+        )
+    finally:
+        connection.close()
+
+    assert [migration.version for migration in applied] == [1, 2]
+    assert [row["value"] for row in records] == ["created-by-second-migration"]
+    assert list(history) == [1, 2]
+    assert applied_again == ()
+
+
+def test_rolls_back_all_changes_when_migration_fails(
+    tmp_path: Path,
+) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "lexlocal.db")
+    connection = factory.create()
+
+    broken = make_migration(
+        1,
+        "001_broken.sql",
+        "checksum-1",
+        """
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY,
+            filename TEXT NOT NULL,
+            checksum_sha256 TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        );
+
+        CREATE TABLE should_not_remain (
+            id INTEGER PRIMARY KEY
+        );
+
+        INSERT INTO table_that_does_not_exist (id)
+        VALUES (1);
+        """,
+    )
+
+    try:
+        with pytest.raises(MigrationExecutionError):
+            run_migrations(connection, (broken,))
+
+        remaining_tables = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN (
+                  'schema_migrations',
+                  'should_not_remain'
+              )
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert remaining_tables == []
