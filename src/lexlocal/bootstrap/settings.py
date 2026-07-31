@@ -22,6 +22,13 @@ class AppSettings:
     def log_dir(self) -> Path:
         return self.data_dir / "logs"
 
+    @property
+    def database_path(self) -> Path:
+        """Return the path to the SQLite database file."""
+        return self.data_dir / "database" / "lexlocal.db"
+
+
+
 
 def default_data_dir() -> Path:
     """Return the default local application-data directory."""
