@@ -7,14 +7,12 @@ from lexlocal.infrastructure.persistence.migration_runner import (
     run_migrations,
 )
 from lexlocal.infrastructure.persistence.migrations import (
+    default_migrations_dir,
     discover_migrations,
 )
 from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
 )
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATIONS_DIR = _PROJECT_ROOT / "migrations"
 
 
 def test_real_migration_pipeline(
@@ -25,7 +23,7 @@ def test_real_migration_pipeline(
     database_path = tmp_path / "database" / "lexlocal.db"
     factory = SQLiteConnectionFactory(database_path)
 
-    migrations = discover_migrations(_MIGRATIONS_DIR)
+    migrations = discover_migrations(default_migrations_dir())
 
     assert migrations
     assert migrations[0].version == 1

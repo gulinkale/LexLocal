@@ -5,8 +5,12 @@ import sqlite3
 import unittest
 from pathlib import Path
 
+from lexlocal.infrastructure.persistence.migrations import (
+    default_migrations_dir,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "migrations" / "001_initial.sql"
+MIGRATION = default_migrations_dir() / "001_initial.sql"
 NOW = "2026-07-27T00:00:00.000Z"
 
 
@@ -225,9 +229,7 @@ class InitialMigrationTests(unittest.TestCase):
             """,
             (NOW, NOW),
         )
-        common = (
-            "w1", "a1", "LITIGATION", "schema-v1", "[]", b"x" * 32, NOW
-        )
+        common = ("w1", "a1", "LITIGATION", "schema-v1", "[]", b"x" * 32, NOW)
         self.db.execute(
             """
             INSERT INTO analysis_versions(
@@ -288,11 +290,15 @@ class InitialMigrationTests(unittest.TestCase):
             source_set_fingerprint(b"k1", "CONTRACT_REVIEW", "schema-v1", sources),
             source_set_fingerprint(b"k1", "LITIGATION", "schema-v2", sources),
             source_set_fingerprint(
-                b"k1", "LITIGATION", "schema-v1",
+                b"k1",
+                "LITIGATION",
+                "schema-v1",
                 [{**sources[0], "document_version_id": "v3"}, sources[1]],
             ),
             source_set_fingerprint(
-                b"k1", "LITIGATION", "schema-v1",
+                b"k1",
+                "LITIGATION",
+                "schema-v1",
                 [{**sources[0], "coverage_state": "PARTIAL"}, sources[1]],
             ),
         ]
@@ -335,9 +341,7 @@ class InitialMigrationTests(unittest.TestCase):
         )
         verify_recorded_migration_checksum(self.db, 1, migration_bytes)
         with self.assertRaises(RuntimeError):
-            verify_recorded_migration_checksum(
-                self.db, 1, migration_bytes + b"\\n-- tampered"
-            )
+            verify_recorded_migration_checksum(self.db, 1, migration_bytes + b"\\n-- tampered")
 
 
 if __name__ == "__main__":

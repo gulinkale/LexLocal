@@ -5,6 +5,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+
+def default_migrations_dir() -> Path:
+    """Return the directory containing packaged SQL migrations."""
+
+    return Path(__file__).with_name("sql_migrations")
+
+
 _MIGRATION_FILENAME_PATTERN = re.compile(r"^(?P<version>\d+)_[a-z0-9_]+\.sql$")
 
 
