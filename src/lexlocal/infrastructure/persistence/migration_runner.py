@@ -19,6 +19,10 @@ class MigrationHistoryError(RuntimeError):
     """Raised when migration files conflict with database history."""
 
 
+class MigrationInputError(RuntimeError):
+    """Raised when a caller supplies an invalid migration sequence."""
+
+
 class MigrationExecutionError(RuntimeError):
     """Raised when pending migrations cannot be applied."""
 
@@ -64,6 +68,8 @@ def select_pending_migrations(
 ) -> tuple[Migration, ...]:
     """Validate migration history and return migrations not yet applied."""
 
+    _validate_migration_sequence(migrations)
+
     migrations_by_version = {migration.version: migration for migration in migrations}
 
     for version, applied in applied_migrations.items():
@@ -78,9 +84,45 @@ def select_pending_migrations(
         if migration.checksum_sha256 != applied.checksum_sha256:
             raise MigrationHistoryError(f"Migration checksum mismatch for version {version}")
 
-    return tuple(
-        migration for migration in migrations if migration.version not in applied_migrations
-    )
+    applied_versions = sorted(applied_migrations)
+    expected_prefix = [
+        migration.version for migration in migrations[: len(applied_versions)]
+    ]
+
+    if applied_versions != expected_prefix:
+        raise MigrationHistoryError(
+            "Applied migration history is not a valid prefix; "
+            f"expected versions {expected_prefix}, found {applied_versions}"
+        )
+
+    return migrations[len(applied_versions) :]
+
+
+def _validate_migration_sequence(migrations: tuple[Migration, ...]) -> None:
+    """Require positive, unique migration versions in strict ascending order."""
+
+    previous_version: int | None = None
+    seen_versions: set[int] = set()
+
+    for migration in migrations:
+        version = migration.version
+
+        if version <= 0:
+            raise MigrationInputError(
+                f"Migration version must be positive: version {version}"
+            )
+
+        if version in seen_versions:
+            raise MigrationInputError(f"Duplicate migration version: {version}")
+
+        if previous_version is not None and version <= previous_version:
+            raise MigrationInputError(
+                "Migrations must be supplied in strictly ascending version order; "
+                f"version {version} follows version {previous_version}"
+            )
+
+        seen_versions.add(version)
+        previous_version = version
 
 
 def _sql_string_literal(value: str) -> str:

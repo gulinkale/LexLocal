@@ -6,7 +6,9 @@ from unittest.mock import Mock
 import pytest
 
 from lexlocal.bootstrap import application as application_bootstrap
+from lexlocal.bootstrap.persistence import initialize_persistence
 from lexlocal.bootstrap.settings import AppSettings
+from lexlocal.infrastructure.persistence.migration_runner import MigrationHistoryError
 
 
 def make_settings(data_dir: Path) -> AppSettings:
@@ -103,6 +105,37 @@ def test_persistence_failure_prevents_ui_startup(
     )
 
     with pytest.raises(RuntimeError, match="migration failed"):
+        application_bootstrap.run(["lexlocal-test"])
+
+    create_application.assert_not_called()
+
+
+def test_real_migration_history_failure_prevents_ui_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings(tmp_path)
+    factory = initialize_persistence(settings)
+    connection = factory.create()
+
+    try:
+        connection.execute(
+            "UPDATE schema_migrations SET checksum_sha256 = ? WHERE version = 1",
+            ("0" * 64,),
+        )
+    finally:
+        connection.close()
+
+    create_application = Mock()
+    monkeypatch.setattr(application_bootstrap, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        application_bootstrap,
+        "configure_logging",
+        lambda actual_settings: Mock(),
+    )
+    monkeypatch.setattr(application_bootstrap, "create_application", create_application)
+
+    with pytest.raises(MigrationHistoryError, match="checksum mismatch"):
         application_bootstrap.run(["lexlocal-test"])
 
     create_application.assert_not_called()

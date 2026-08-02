@@ -8,6 +8,7 @@ from lexlocal.infrastructure.persistence.migration_runner import (
     AppliedMigration,
     MigrationExecutionError,
     MigrationHistoryError,
+    MigrationInputError,
     load_applied_migrations,
     run_migrations,
     select_pending_migrations,
@@ -119,6 +120,132 @@ def test_returns_only_pending_migrations() -> None:
     )
 
     assert pending == (second,)
+
+
+def test_valid_applied_prefix_returns_only_remaining_migration() -> None:
+    migrations = tuple(
+        make_migration(version, f"00{version}_migration.sql", f"checksum-{version}")
+        for version in (1, 2, 3)
+    )
+    applied = {
+        migration.version: AppliedMigration(
+            migration.version,
+            migration.filename,
+            migration.checksum_sha256,
+        )
+        for migration in migrations[:2]
+    }
+
+    assert select_pending_migrations(migrations, applied) == (migrations[2],)
+
+
+def test_fully_applied_valid_history_returns_no_pending_migrations() -> None:
+    migrations = tuple(
+        make_migration(version, f"00{version}_migration.sql", f"checksum-{version}")
+        for version in (1, 2)
+    )
+    applied = {
+        migration.version: AppliedMigration(
+            migration.version,
+            migration.filename,
+            migration.checksum_sha256,
+        )
+        for migration in migrations
+    }
+
+    assert select_pending_migrations(migrations, applied) == ()
+
+
+def test_rejects_unsorted_migration_input() -> None:
+    first = make_migration(1, "001_first.sql", "checksum-1")
+    second = make_migration(2, "002_second.sql", "checksum-2")
+
+    with pytest.raises(MigrationInputError, match="strictly ascending"):
+        select_pending_migrations((second, first), {})
+
+
+def test_rejects_duplicate_migration_input() -> None:
+    first = make_migration(1, "001_first.sql", "checksum-1")
+    duplicate = make_migration(1, "001_duplicate.sql", "checksum-duplicate")
+
+    with pytest.raises(MigrationInputError, match="Duplicate migration version: 1"):
+        select_pending_migrations((first, duplicate), {})
+
+
+def test_rejects_non_positive_migration_input() -> None:
+    invalid = make_migration(0, "000_invalid.sql", "checksum-0")
+
+    with pytest.raises(MigrationInputError, match="must be positive"):
+        select_pending_migrations((invalid,), {})
+
+
+@pytest.mark.parametrize("applied_versions", [(2,), (1, 3)])
+def test_rejects_applied_history_that_is_not_a_valid_prefix(
+    applied_versions: tuple[int, ...],
+) -> None:
+    migrations = tuple(
+        make_migration(version, f"00{version}_migration.sql", f"checksum-{version}")
+        for version in (1, 2, 3)
+    )
+    applied = {
+        version: AppliedMigration(
+            version,
+            migrations[version - 1].filename,
+            migrations[version - 1].checksum_sha256,
+        )
+        for version in applied_versions
+    }
+
+    with pytest.raises(MigrationHistoryError, match="not a valid prefix"):
+        select_pending_migrations(migrations, applied)
+
+
+def test_invalid_history_makes_no_database_changes(tmp_path: Path) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "lexlocal.db")
+    connection = factory.create()
+    first = make_migration(
+        1,
+        "001_first.sql",
+        "checksum-1",
+        "CREATE TABLE should_not_be_created (id INTEGER PRIMARY KEY);",
+    )
+    second = make_migration(2, "002_second.sql", "checksum-2")
+
+    try:
+        connection.execute(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                checksum_sha256 TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO schema_migrations (
+                version, filename, checksum_sha256, applied_at
+            )
+            VALUES (2, '002_second.sql', 'checksum-2', '2026-08-02T00:00:00Z')
+            """
+        )
+
+        with pytest.raises(MigrationHistoryError, match="not a valid prefix"):
+            run_migrations(connection, (first, second))
+
+        created_table = connection.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name = 'should_not_be_created'
+            """
+        ).fetchone()
+        history = load_applied_migrations(connection)
+    finally:
+        connection.close()
+
+    assert created_table is None
+    assert list(history) == [2]
 
 
 def test_rejects_changed_applied_migration() -> None:
