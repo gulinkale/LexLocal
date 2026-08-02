@@ -42,16 +42,6 @@ _SENSITIVE_VALUE_PATTERN = re.compile(
 )
 
 
-class SensitiveDataFilter(logging.Filter):
-    """Redact known sensitive key-value pairs from log messages."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        record.msg = _redact_sensitive_values(message)
-        record.args = ()
-        return True
-
-
 def _redact_sensitive_values(message: str) -> str:
     """Replace known sensitive values with a fixed marker."""
 
@@ -63,6 +53,22 @@ def _redact_sensitive_values(message: str) -> str:
         ),
         message,
     )
+
+
+class SensitiveDataFormatter(logging.Formatter):
+    """Redact known sensitive values from fully formatted log output."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format messages and tracebacks without mutating shared exception state."""
+
+        original_exc_text = record.exc_text
+
+        try:
+            formatted_message = super().format(record)
+        finally:
+            record.exc_text = original_exc_text
+
+        return _redact_sensitive_values(formatted_message)
 
 
 def configure_logging(
@@ -81,18 +87,16 @@ def configure_logging(
 
     _remove_existing_handlers(logger)
 
-    formatter = logging.Formatter(
+    formatter = SensitiveDataFormatter(
         fmt=_LOG_FORMAT,
         datefmt=_DATE_FORMAT,
     )
-    sensitive_data_filter = SensitiveDataFilter()
 
     console_handler = logging.StreamHandler(
         console_stream if console_stream is not None else sys.stderr
     )
     console_handler.setLevel(settings.log_level)
     console_handler.setFormatter(formatter)
-    console_handler.addFilter(sensitive_data_filter)
 
     file_handler = RotatingFileHandler(
         filename=settings.log_dir / _LOG_FILE_NAME,
@@ -103,7 +107,6 @@ def configure_logging(
     )
     file_handler.setLevel(settings.log_level)
     file_handler.setFormatter(formatter)
-    file_handler.addFilter(sensitive_data_filter)
 
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)

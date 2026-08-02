@@ -1,11 +1,12 @@
 import logging
+import sys
 from collections.abc import Iterator
 from io import StringIO
 from pathlib import Path
 
 import pytest
 
-from lexlocal.bootstrap.logging_setup import configure_logging
+from lexlocal.bootstrap.logging_setup import SensitiveDataFormatter, configure_logging
 from lexlocal.bootstrap.settings import AppSettings
 
 
@@ -33,6 +34,23 @@ def _clear_lexlocal_handlers() -> None:
 def _flush_handlers(logger: logging.Logger) -> None:
     for handler in logger.handlers:
         handler.flush()
+
+
+def _read_log_outputs(
+    console: StringIO,
+    settings: AppSettings,
+) -> tuple[str, str]:
+    log_file = settings.log_dir / "lexlocal.log"
+    return console.getvalue(), log_file.read_text(encoding="utf-8")
+
+
+def _assert_in_console_and_file(
+    console_output: str,
+    file_output: str,
+    expected: str,
+) -> None:
+    assert expected in console_output
+    assert expected in file_output
 
 
 @pytest.fixture(autouse=True)
@@ -124,3 +142,139 @@ def test_reconfiguration_does_not_duplicate_messages(
     _flush_handlers(logger)
 
     assert console.getvalue().count("Application started") == 1
+
+
+def test_logger_exception_redacts_sensitive_exception_message(
+    tmp_path: Path,
+) -> None:
+    console = StringIO()
+    settings = _make_settings(tmp_path)
+    logger = configure_logging(settings, console_stream=console)
+
+    try:
+        raise RuntimeError("password=traceback-secret")
+    except RuntimeError:
+        logger.exception("Operation failed while opening the workspace")
+
+    _flush_handlers(logger)
+    console_output, file_output = _read_log_outputs(console, settings)
+
+    assert "traceback-secret" not in console_output
+    assert "traceback-secret" not in file_output
+    _assert_in_console_and_file(console_output, file_output, "password=[REDACTED]")
+    _assert_in_console_and_file(console_output, file_output, "RuntimeError")
+    _assert_in_console_and_file(
+        console_output,
+        file_output,
+        "Operation failed while opening the workspace",
+    )
+    _assert_in_console_and_file(console_output, file_output, "Traceback (most recent call last)")
+
+
+def test_error_with_exc_info_redacts_sensitive_exception_message(
+    tmp_path: Path,
+) -> None:
+    console = StringIO()
+    settings = _make_settings(tmp_path)
+    logger = configure_logging(settings, console_stream=console)
+
+    try:
+        raise ValueError("token=exception-token")
+    except ValueError:
+        logger.error("Model request failed", exc_info=True)
+
+    _flush_handlers(logger)
+    console_output, file_output = _read_log_outputs(console, settings)
+
+    assert "exception-token" not in console_output
+    assert "exception-token" not in file_output
+    _assert_in_console_and_file(console_output, file_output, "token=[REDACTED]")
+    _assert_in_console_and_file(console_output, file_output, "ValueError")
+    _assert_in_console_and_file(console_output, file_output, "Model request failed")
+    _assert_in_console_and_file(console_output, file_output, "Traceback (most recent call last)")
+
+
+def test_chained_exception_redacts_every_sensitive_exception_message(
+    tmp_path: Path,
+) -> None:
+    console = StringIO()
+    settings = _make_settings(tmp_path)
+    logger = configure_logging(settings, console_stream=console)
+
+    try:
+        try:
+            raise ValueError("token=inner-secret")
+        except ValueError as exc:
+            raise RuntimeError("password=outer-secret") from exc
+    except RuntimeError:
+        logger.exception("Workspace initialization failed")
+
+    _flush_handlers(logger)
+    console_output, file_output = _read_log_outputs(console, settings)
+
+    for secret in ("inner-secret", "outer-secret"):
+        assert secret not in console_output
+        assert secret not in file_output
+
+    for expected in (
+        "token=[REDACTED]",
+        "password=[REDACTED]",
+        "ValueError",
+        "RuntimeError",
+        "The above exception was the direct cause",
+        "Workspace initialization failed",
+    ):
+        _assert_in_console_and_file(console_output, file_output, expected)
+
+
+def test_non_sensitive_exception_keeps_useful_traceback_information(
+    tmp_path: Path,
+) -> None:
+    console = StringIO()
+    settings = _make_settings(tmp_path)
+    logger = configure_logging(settings, console_stream=console)
+
+    try:
+        raise RuntimeError("Local model cache is unavailable")
+    except RuntimeError:
+        logger.exception("Model startup failed")
+
+    _flush_handlers(logger)
+    console_output, file_output = _read_log_outputs(console, settings)
+
+    for expected in (
+        "Model startup failed",
+        "Traceback (most recent call last)",
+        "RuntimeError: Local model cache is unavailable",
+        "test_non_sensitive_exception_keeps_useful_traceback_information",
+    ):
+        _assert_in_console_and_file(console_output, file_output, expected)
+
+
+def test_formatter_does_not_mutate_arguments_or_exception_information() -> None:
+    try:
+        raise RuntimeError("token=shared-record-secret")
+    except RuntimeError:
+        exception_information = sys.exc_info()
+
+    arguments = ("workspace-1",)
+    record = logging.LogRecord(
+        name="lexlocal",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="Operation failed for %s",
+        args=arguments,
+        exc_info=exception_information,
+    )
+    formatter = SensitiveDataFormatter("%(levelname)s | %(message)s")
+
+    first_output = formatter.format(record)
+    second_output = formatter.format(record)
+
+    assert "shared-record-secret" not in first_output
+    assert first_output == second_output
+    assert record.msg == "Operation failed for %s"
+    assert record.args == arguments
+    assert record.exc_info is exception_information
+    assert record.exc_text is None
