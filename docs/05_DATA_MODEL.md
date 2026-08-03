@@ -649,6 +649,14 @@ ON document_processing_jobs(state, heartbeat_at);
 
 A startup recovery query looks for stale `PROCESSING` jobs.
 
+Each row is one immutable processing attempt. `READY`,
+`READY_WITH_WARNINGS`, `FAILED`, and `CANCELLED` are terminal states for that
+row. Retrying or reprocessing the same document version inserts a new row with
+a new application-generated identifier and the next positive
+`attempt_number`; it does not update a terminal row back to `QUEUED` or
+`PROCESSING`. Allocation of the next attempt number and insertion of the new
+attempt occur together in a later application use-case/repository transaction.
+
 ---
 
 ## 20. `document_pages`
