@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from PySide6.QtWidgets import QApplication
 
 from lexlocal.bootstrap.logging_setup import configure_logging
+from lexlocal.bootstrap.persistence import initialize_persistence
 from lexlocal.bootstrap.settings import load_settings
 from lexlocal.presentation.windows.main_window import MainWindow
 
@@ -35,6 +36,11 @@ def run(argv: Sequence[str] | None = None) -> int:
     logger = configure_logging(settings)
 
     logger.info("Application starting")
+
+    # The composition root owns persistence dependencies for the lifetime of
+    # the event loop. They can be passed to application services here as those
+    # services are introduced.
+    _connection_factory = initialize_persistence(settings)
 
     application, main_window = create_application(argv)
     main_window.show()
