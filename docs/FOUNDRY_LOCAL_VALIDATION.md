@@ -31,6 +31,15 @@ fields when the installed SDK exposes them.
 
 ## Commands
 
+Run the normal automated verification suite. The real Foundry smoke test is
+collected but skipped unless it is explicitly enabled:
+
+```bash
+uv run pytest
+uv run pytest tests/unit/infrastructure/foundry -v
+uv run pytest tests/unit/scripts/test_validate_foundry_local.py -v
+```
+
 Prepare execution providers and the model while online:
 
 ```bash
@@ -65,6 +74,50 @@ SDK 1.2.3 exposes `model.is_cached`, but no API that proves the operating system
 is offline. `--cached-only` requires the local cache and skips intentional
 execution-provider and model downloads. Physical network disconnection is still
 required for strict offline evidence.
+
+## Opt-In Pytest Smoke Test
+
+The hardware-dependent integration test uses the reusable infrastructure
+adapter and is disabled during normal pytest runs. Enable it explicitly only
+after the validation model is already present in the Foundry Local cache:
+
+```bash
+LEXLOCAL_RUN_FOUNDRY_SMOKE=1 \
+  uv run pytest \
+  tests/integration/foundry/test_foundry_local_smoke.py -v
+```
+
+The default alias is `qwen2.5-0.5b`. To use another already cached validation
+alias without changing production model decisions:
+
+```bash
+LEXLOCAL_RUN_FOUNDRY_SMOKE=1 \
+LEXLOCAL_FOUNDRY_SMOKE_MODEL=<cached-model-alias> \
+  uv run pytest \
+  tests/integration/foundry/test_foundry_local_smoke.py -v
+```
+
+The smoke test always requests cached-only operation. It does not prepare
+execution providers or download a model. If the requested model is not cached,
+the test fails rather than downloading it. Setting the opt-in variable proves
+only that the operator requested the hardware test; it does not prove network
+is disabled.
+
+For strict offline validation, first prepare the runtime/model online, then run
+either the cached-only script or the opt-in test while Wi-Fi/Ethernet is
+physically disconnected or while an external operating-system policy denies
+network access. On the recorded macOS environment, the documented process is:
+
+```bash
+sandbox-exec -p '(version 1) (allow default) (deny network*)' \
+  env LEXLOCAL_RUN_FOUNDRY_SMOKE=1 \
+  uv run pytest \
+  tests/integration/foundry/test_foundry_local_smoke.py -v
+```
+
+`--cached-only` and the pytest environment variable do not automatically block
+network access. Strict offline evidence must record the external network-denial
+mechanism and the command result.
 
 ## Success Criteria
 
@@ -142,6 +195,10 @@ macOS sandbox profile rather than by Foundry Local SDK 1.2.3.
 - Initial runtime, execution-provider, and model preparation requires internet.
 - Performance depends on the selected model and available device memory.
 - Current hardware evidence is limited to the recorded Apple Silicon machine.
+- The opt-in smoke test depends on a working Foundry Local runtime, compatible
+  execution provider, sufficient local resources, and an already cached model.
+- Normal CI and normal pytest runs deliberately do not exercise local model
+  hardware or download runtime/model resources.
 - The script uses a fixed synthetic, non-sensitive prompt.
 - This validation does not cover RAG, embeddings, document ingestion, PDF/OCR,
   legal question answering, production lifecycle management, or PySide6 UI
