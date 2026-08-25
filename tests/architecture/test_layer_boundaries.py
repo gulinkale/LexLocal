@@ -1,4 +1,5 @@
 import ast
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -41,6 +42,8 @@ _LAYER_RULES = (
         ),
     ),
 )
+
+_FORBIDDEN_DOMAIN_STDLIB = {"sqlite3"}
 
 
 def _iter_python_files(layer: str) -> Iterator[Path]:
@@ -127,5 +130,72 @@ def test_layer_import_boundaries(
 
     assert not violations, (
         "Architecture boundary violations:\n"
+        + "\n".join(sorted(violations))
+    )
+
+def test_domain_imports_only_standard_library_or_domain_modules() -> None:
+    violations: list[str] = []
+
+    for path in _iter_python_files("domain"):
+        for imported_module in _iter_imported_modules(path):
+            root_module = imported_module.split(".", 1)[0]
+
+            is_domain_module = (
+                imported_module == "lexlocal.domain"
+                or imported_module.startswith("lexlocal.domain.")
+            )
+
+            is_allowed_stdlib = (
+                root_module in sys.stdlib_module_names
+                and root_module not in _FORBIDDEN_DOMAIN_STDLIB
+            )
+
+            if not is_domain_module and not is_allowed_stdlib:
+                relative_path = path.relative_to(_PROJECT_ROOT)
+                violations.append(
+                    f"{relative_path} imports forbidden dependency "
+                    f"{imported_module}"
+                )
+
+            if root_module in _FORBIDDEN_DOMAIN_STDLIB:
+                relative_path = path.relative_to(_PROJECT_ROOT)
+                violations.append(
+                    f"{relative_path} imports forbidden dependency "
+                    f"{imported_module}"
+                )
+
+    assert not violations, (
+        "Forbidden domain dependencies:\n"
+        + "\n".join(sorted(set(violations)))
+    )
+
+def test_domain_modules_do_not_import_from_domain_package_root() -> None:
+    violations: list[str] = []
+
+    for path in _iter_python_files("domain"):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and node.module == "lexlocal.domain"
+            ):
+                relative_path = path.relative_to(_PROJECT_ROOT)
+                violations.append(
+                    f"{relative_path} imports from lexlocal.domain package root"
+                )
+
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "lexlocal.domain":
+                        relative_path = path.relative_to(_PROJECT_ROOT)
+                        violations.append(
+                            f"{relative_path} imports lexlocal.domain package root"
+                        )
+
+    assert not violations, (
+        "Domain package-root imports are forbidden:\n"
         + "\n".join(sorted(violations))
     )

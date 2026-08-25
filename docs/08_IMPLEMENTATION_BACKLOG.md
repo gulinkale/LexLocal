@@ -86,6 +86,7 @@ question, receive a grounded answer, and open the cited page and passage.
 
 - DOMAIN-001: Establish core workspace, document, processing, and RAG domain contracts
   - Define documented identifiers, statuses, evidence states, and transition guards in the domain layer.
+  - Treat each processing job as one attempt; terminal attempts are immutable, and retry creates a new attempt outside this domain ticket.
   - Keep persisted state distinct from derived UI state and prohibit cross-workspace operations.
   - Represent typed failures without exposing infrastructure or UI types to the domain.
   - Test valid transitions, invalid transitions, equality, and workspace-scope guards.

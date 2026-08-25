@@ -2266,10 +2266,17 @@ Required persistent states:
 |---|---|---|
 | `QUEUED` | Accepted and waiting | `PROCESSING`, `CANCELLED` |
 | `PROCESSING` | Extraction/OCR/index pipeline running | `READY`, `READY_WITH_WARNINGS`, `FAILED`, `CANCELLED` |
-| `READY` | Fully eligible for retrieval | reprocess/version/delete flows |
-| `READY_WITH_WARNINGS` | Partially eligible with documented coverage gaps | retry/reprocess/version/delete flows |
-| `FAILED` | Not eligible for retrieval | `QUEUED`/`PROCESSING` through retry, or record removal |
-| `CANCELLED` | User cancelled; not eligible | `QUEUED`/`PROCESSING` through restart, or record removal |
+| `READY` | Fully eligible for retrieval | terminal for this processing-attempt record |
+| `READY_WITH_WARNINGS` | Partially eligible with documented coverage gaps | terminal for this processing-attempt record |
+| `FAILED` | Not eligible for retrieval | terminal for this processing-attempt record |
+| `CANCELLED` | User cancelled; not eligible | terminal for this processing-attempt record |
+
+One `ProcessingJob` represents exactly one processing attempt. Retry or
+reprocessing never moves a terminal job back to `QUEUED` or `PROCESSING`.
+Instead, it creates a new `ProcessingJob` for the same document version with a
+new identifier and the next positive `attempt_number`. The application
+use-case/repository transaction owns new-attempt creation and attempt-number
+allocation. Existing terminal attempts remain immutable historical records.
 
 Derived startup condition:
 
@@ -2278,7 +2285,9 @@ Derived startup condition:
 Invariants:
 
 - only `READY` and `READY_WITH_WARNINGS` enter retrieval,
-- no failed, cancelled, or interrupted partial index becomes active.
+- no failed, cancelled, or interrupted partial index becomes active,
+- `READY`, `READY_WITH_WARNINGS`, `FAILED`, and `CANCELLED` processing-attempt
+  records are terminal and immutable.
 
 ---
 
