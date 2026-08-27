@@ -7,6 +7,7 @@ _ALLOWED_ENVIRONMENTS = frozenset({"development", "test", "production"})
 _ALLOWED_LOG_LEVELS = frozenset(
     {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 )
+_INSECURE_DEVELOPMENT_PROVIDER = "insecure-development-only"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +18,7 @@ class AppSettings:
     environment: str
     log_level: str
     data_dir: Path
+    security_provider: str = ""
 
     @property
     def log_dir(self) -> Path:
@@ -64,9 +66,21 @@ def load_settings(
         else default_data_dir()
     )
 
+    configured_security_provider = values.get("LEXLOCAL_SECURITY_PROVIDER", "").strip()
+    security_provider = (
+        configured_security_provider
+        if configured_security_provider
+        else (
+            _INSECURE_DEVELOPMENT_PROVIDER
+            if environment in {"development", "test"}
+            else ""
+        )
+    )
+
     return AppSettings(
         app_name="LexLocal",
         environment=environment,
         log_level=log_level,
         data_dir=data_dir,
+        security_provider=security_provider,
     )
