@@ -19,6 +19,7 @@ def make_settings(data_dir: Path) -> AppSettings:
         environment="test",
         log_level="INFO",
         data_dir=data_dir,
+        security_provider="insecure-development-only",
     )
 
 
@@ -30,6 +31,7 @@ def test_run_initializes_persistence_before_showing_window(
     events: list[str] = []
     logger = Mock()
     connection_factory = Mock()
+    workspace_application = Mock()
     qt_application = Mock()
     qt_application.exec.return_value = 0
     main_window = Mock()
@@ -56,6 +58,12 @@ def test_run_initializes_persistence_before_showing_window(
         events.append("create_application")
         return qt_application, main_window
 
+    def compose(actual_settings: AppSettings, actual_factory: Mock) -> Mock:
+        assert actual_settings is settings
+        assert actual_factory is connection_factory
+        events.append("compose_workspace_application")
+        return workspace_application
+
     def show() -> None:
         events.append("show_window")
 
@@ -64,6 +72,11 @@ def test_run_initializes_persistence_before_showing_window(
         return 0
 
     monkeypatch.setattr(application_bootstrap, "initialize_persistence", initialize)
+    monkeypatch.setattr(
+        application_bootstrap,
+        "compose_workspace_application",
+        compose,
+    )
     monkeypatch.setattr(application_bootstrap, "create_application", create)
     main_window.show.side_effect = show
     qt_application.exec.side_effect = execute
@@ -75,6 +88,7 @@ def test_run_initializes_persistence_before_showing_window(
         "load_settings",
         "configure_logging",
         "initialize_persistence",
+        "compose_workspace_application",
         "create_application",
         "show_window",
         "execute_event_loop",

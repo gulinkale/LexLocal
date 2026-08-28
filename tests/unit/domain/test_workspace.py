@@ -1,13 +1,16 @@
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
 from lexlocal.domain.errors import InvalidDomainValue, InvalidStateTransition
 from lexlocal.domain.identifiers import DocumentId, WorkspaceId
-from lexlocal.domain.workspace import Workspace, WorkspaceState
+from lexlocal.domain.workspace import Workspace, WorkspaceProfile, WorkspaceState
 
 WORKSPACE_ID = WorkspaceId("550e8400-e29b-41d4-a716-446655440000")
 DISPLAY_NAME = "Matter Workspace"
+CREATED_AT = datetime(2026, 8, 28, 9, 30, tzinfo=UTC)
+UPDATED_AT = datetime(2026, 8, 28, 10, 45, tzinfo=UTC)
 
 VALID_TRANSITIONS = (
     (WorkspaceState.ACTIVE, WorkspaceState.ARCHIVED),
@@ -31,6 +34,25 @@ INVALID_TRANSITION_IDS = tuple(
 )
 
 
+def make_workspace(
+    *,
+    workspace_id: WorkspaceId = WORKSPACE_ID,
+    display_name: str = DISPLAY_NAME,
+    profile: WorkspaceProfile | None = None,
+    state: WorkspaceState = WorkspaceState.ACTIVE,
+    created_at: datetime = CREATED_AT,
+    updated_at: datetime = UPDATED_AT,
+) -> Workspace:
+    return Workspace(
+        id=workspace_id,
+        display_name=display_name,
+        created_at=created_at,
+        updated_at=updated_at,
+        profile=profile,
+        state=state,
+    )
+
+
 def test_workspace_state_contains_exact_persisted_states() -> None:
     assert {state.value for state in WorkspaceState} == {
         "ACTIVE",
@@ -42,16 +64,32 @@ def test_workspace_state_contains_exact_persisted_states() -> None:
 
 
 def test_workspace_defaults_to_active() -> None:
-    workspace = Workspace(id=WORKSPACE_ID, display_name=DISPLAY_NAME)
+    workspace = make_workspace()
 
     assert workspace.id == WORKSPACE_ID
     assert workspace.display_name == DISPLAY_NAME
+    assert workspace.profile is None
+    assert workspace.created_at == CREATED_AT
+    assert workspace.updated_at == UPDATED_AT
     assert workspace.state is WorkspaceState.ACTIVE
+
+
+def test_workspace_profile_contains_exact_persisted_values() -> None:
+    assert {profile.value for profile in WorkspaceProfile} == {
+        "LITIGATION",
+        "CONTRACT_REVIEW",
+        "GENERAL_LEGAL",
+    }
+
+
+@pytest.mark.parametrize("profile", tuple(WorkspaceProfile), ids=lambda value: value.value)
+def test_workspace_accepts_approved_profile(profile: WorkspaceProfile) -> None:
+    assert make_workspace(profile=profile).profile is profile
 
 
 @pytest.mark.parametrize("state", tuple(WorkspaceState), ids=lambda state: state.value)
 def test_workspace_accepts_explicit_persisted_state(state: WorkspaceState) -> None:
-    workspace = Workspace(id=WORKSPACE_ID, display_name=DISPLAY_NAME, state=state)
+    workspace = make_workspace(state=state)
 
     assert workspace.state is state
 
@@ -59,34 +97,65 @@ def test_workspace_accepts_explicit_persisted_state(state: WorkspaceState) -> No
 @pytest.mark.parametrize("display_name", ["", "   "])
 def test_workspace_rejects_empty_semantic_display_name(display_name: str) -> None:
     with pytest.raises(InvalidDomainValue):
-        Workspace(id=WORKSPACE_ID, display_name=display_name)
+        make_workspace(display_name=display_name)
 
 
 @pytest.mark.parametrize("invalid_name", [None, 123])
 def test_workspace_rejects_non_string_display_name(invalid_name: object) -> None:
     with pytest.raises(InvalidDomainValue):
-        Workspace(id=WORKSPACE_ID, display_name=invalid_name)  # type: ignore[arg-type]
+        make_workspace(display_name=invalid_name)  # type: ignore[arg-type]
 
 
 def test_workspace_preserves_valid_display_text() -> None:
     display_name = "  Özel Çalışma Alanı  "
 
-    assert Workspace(id=WORKSPACE_ID, display_name=display_name).display_name == display_name
+    assert make_workspace(display_name=display_name).display_name == display_name
 
 
 @pytest.mark.parametrize("invalid_id", [str(WORKSPACE_ID), DocumentId(str(WORKSPACE_ID))])
 def test_workspace_rejects_non_workspace_identifier(invalid_id: object) -> None:
     with pytest.raises(InvalidDomainValue):
-        Workspace(id=invalid_id, display_name=DISPLAY_NAME)  # type: ignore[arg-type]
+        make_workspace(workspace_id=invalid_id)  # type: ignore[arg-type]
+
+
+def test_workspace_rejects_non_profile_value() -> None:
+    with pytest.raises(InvalidDomainValue):
+        make_workspace(profile="LITIGATION")  # type: ignore[arg-type]
 
 
 def test_workspace_rejects_non_workspace_state() -> None:
     with pytest.raises(InvalidDomainValue):
-        Workspace(
-            id=WORKSPACE_ID,
-            display_name=DISPLAY_NAME,
-            state="ACTIVE",  # type: ignore[arg-type]
-        )
+        make_workspace(state="ACTIVE")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("field_name", ["created_at", "updated_at"])
+@pytest.mark.parametrize(
+    "invalid_timestamp",
+    [
+        datetime(2026, 8, 28, 9, 30),
+        datetime(2026, 8, 28, 12, 30, tzinfo=timezone(timedelta(hours=3))),
+        "2026-08-28T09:30:00Z",
+    ],
+)
+def test_workspace_rejects_timestamp_that_is_not_aware_utc(
+    field_name: str,
+    invalid_timestamp: object,
+) -> None:
+    values = {field_name: invalid_timestamp}
+
+    with pytest.raises(InvalidDomainValue):
+        make_workspace(**values)  # type: ignore[arg-type]
+
+
+def test_workspace_rejects_updated_at_before_created_at() -> None:
+    with pytest.raises(InvalidDomainValue):
+        make_workspace(created_at=UPDATED_AT, updated_at=CREATED_AT)
+
+
+def test_workspace_accepts_equal_creation_and_update_timestamps() -> None:
+    workspace = make_workspace(updated_at=CREATED_AT)
+
+    assert workspace.created_at == workspace.updated_at
 
 
 @pytest.mark.parametrize(
@@ -98,17 +167,16 @@ def test_workspace_applies_valid_transition_without_mutating_original(
     current_state: WorkspaceState,
     target_state: WorkspaceState,
 ) -> None:
-    workspace = Workspace(
-        id=WORKSPACE_ID,
-        display_name=DISPLAY_NAME,
-        state=current_state,
-    )
+    workspace = make_workspace(state=current_state)
 
     transitioned = workspace.transition_to(target_state)
 
     assert transitioned.state is target_state
     assert transitioned.id == workspace.id
     assert transitioned.display_name == workspace.display_name
+    assert transitioned.profile == workspace.profile
+    assert transitioned.created_at == workspace.created_at
+    assert transitioned.updated_at == workspace.updated_at
     assert workspace.state is current_state
     assert transitioned is not workspace
 
@@ -122,11 +190,7 @@ def test_workspace_rejects_unapproved_transition(
     current_state: WorkspaceState,
     target_state: WorkspaceState,
 ) -> None:
-    workspace = Workspace(
-        id=WORKSPACE_ID,
-        display_name=DISPLAY_NAME,
-        state=current_state,
-    )
+    workspace = make_workspace(state=current_state)
 
     with pytest.raises(InvalidStateTransition):
         workspace.transition_to(target_state)
@@ -147,11 +211,7 @@ def test_deletion_state_cannot_reopen_as_normal_workspace(
     deletion_state: WorkspaceState,
     normal_state: WorkspaceState,
 ) -> None:
-    workspace = Workspace(
-        id=WORKSPACE_ID,
-        display_name=DISPLAY_NAME,
-        state=deletion_state,
-    )
+    workspace = make_workspace(state=deletion_state)
 
     with pytest.raises(InvalidStateTransition):
         workspace.transition_to(normal_state)
@@ -173,16 +233,19 @@ def test_workspace_capability_matrix(
     allows_mutation: bool,
     allows_processing: bool,
 ) -> None:
-    workspace = Workspace(id=WORKSPACE_ID, display_name=DISPLAY_NAME, state=state)
+    workspace = make_workspace(state=state)
 
     assert workspace.allows_normal_read is allows_read
     assert workspace.allows_normal_mutation is allows_mutation
     assert workspace.allows_new_processing is allows_processing
 
 
-@pytest.mark.parametrize("attribute_name", ["id", "display_name", "state"])
+@pytest.mark.parametrize(
+    "attribute_name",
+    ["id", "display_name", "profile", "state", "created_at", "updated_at"],
+)
 def test_workspace_is_immutable(attribute_name: str) -> None:
-    workspace = Workspace(id=WORKSPACE_ID, display_name=DISPLAY_NAME)
+    workspace = make_workspace()
 
     with pytest.raises(FrozenInstanceError):
         setattr(workspace, attribute_name, None)
@@ -190,7 +253,7 @@ def test_workspace_is_immutable(attribute_name: str) -> None:
 
 def test_workspace_repr_does_not_expose_sensitive_display_name() -> None:
     sensitive_name = "Highly Sensitive Matter Name"
-    workspace = Workspace(id=WORKSPACE_ID, display_name=sensitive_name)
+    workspace = make_workspace(display_name=sensitive_name)
 
     assert sensitive_name not in repr(workspace)
     assert str(WORKSPACE_ID) in repr(workspace)
