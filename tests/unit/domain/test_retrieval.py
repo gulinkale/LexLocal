@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 
 import pytest
 
@@ -55,6 +56,7 @@ MODEL_ID = LocalModelId("80000000-0000-4000-8000-000000000001")
 PAGE_ONE = PageNumber(1)
 RANK_ONE = EvidenceRank(1)
 SCORE = SimilarityScore(0.75)
+WORKSPACE_TIMESTAMP = datetime(2026, 8, 28, 9, 30, tzinfo=UTC)
 
 
 def _version(
@@ -126,7 +128,13 @@ def _workspace(
     id: WorkspaceId = WORKSPACE_ID,
     state: WorkspaceState = WorkspaceState.ACTIVE,
 ) -> Workspace:
-    return Workspace(id=id, display_name="Matter", state=state)
+    return Workspace(
+        id=id,
+        display_name="Matter",
+        created_at=WORKSPACE_TIMESTAMP,
+        updated_at=WORKSPACE_TIMESTAMP,
+        state=state,
+    )
 
 
 def _index_generation(

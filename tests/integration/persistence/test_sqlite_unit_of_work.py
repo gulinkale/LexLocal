@@ -10,8 +10,21 @@ from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
 )
 from lexlocal.infrastructure.persistence.sqlite_unit_of_work import (
-    SQLiteUnitOfWork,
+    SQLiteUnitOfWork as _SQLiteUnitOfWork,
 )
+from lexlocal.infrastructure.security.insecure_development_workspace import (
+    InsecureDevelopmentOnlyWorkspaceNamePersistence,
+)
+
+
+class SQLiteUnitOfWork(_SQLiteUnitOfWork):
+    """Supply the explicit development adapter to legacy UoW behavior tests."""
+
+    def __init__(self, connection_factory: SQLiteConnectionFactory) -> None:
+        super().__init__(
+            connection_factory,
+            InsecureDevelopmentOnlyWorkspaceNamePersistence(),
+        )
 
 
 def create_test_table(
