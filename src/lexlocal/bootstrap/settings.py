@@ -1,4 +1,5 @@
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,9 @@ _ALLOWED_LOG_LEVELS = frozenset(
     {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 )
 _INSECURE_DEVELOPMENT_PROVIDER = "insecure-development-only"
+_DEFAULT_CHAT_MODEL_ALIAS = "qwen3-4b"
+_DEFAULT_EMBEDDING_MODEL_ALIAS = "qwen3-embedding-0.6b"
+_MODEL_ALIAS_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +23,8 @@ class AppSettings:
     log_level: str
     data_dir: Path
     security_provider: str = ""
+    chat_model_alias: str = _DEFAULT_CHAT_MODEL_ALIAS
+    embedding_model_alias: str = _DEFAULT_EMBEDDING_MODEL_ALIAS
 
     @property
     def log_dir(self) -> Path:
@@ -36,6 +42,19 @@ def default_data_dir() -> Path:
     """Return the default local application-data directory."""
 
     return Path.home() / ".lexlocal"
+
+
+def _load_model_alias(
+    values: Mapping[str, str],
+    variable: str,
+    default: str,
+) -> str:
+    alias = values.get(variable, default).strip()
+    if _MODEL_ALIAS_PATTERN.fullmatch(alias) is None:
+        raise ValueError(
+            f"{variable} must be a non-empty local model alias"
+        )
+    return alias
 
 
 def load_settings(
@@ -76,6 +95,16 @@ def load_settings(
             else ""
         )
     )
+    chat_model_alias = _load_model_alias(
+        values,
+        "LEXLOCAL_CHAT_MODEL_ALIAS",
+        _DEFAULT_CHAT_MODEL_ALIAS,
+    )
+    embedding_model_alias = _load_model_alias(
+        values,
+        "LEXLOCAL_EMBEDDING_MODEL_ALIAS",
+        _DEFAULT_EMBEDDING_MODEL_ALIAS,
+    )
 
     return AppSettings(
         app_name="LexLocal",
@@ -83,4 +112,6 @@ def load_settings(
         log_level=log_level,
         data_dir=data_dir,
         security_provider=security_provider,
+        chat_model_alias=chat_model_alias,
+        embedding_model_alias=embedding_model_alias,
     )

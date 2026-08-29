@@ -5,10 +5,14 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Self
 
+from lexlocal.application.ports.local_models import ResolvedModelRepository
 from lexlocal.application.ports.unit_of_work import UnitOfWork
 from lexlocal.application.ports.workspaces import WorkspaceRepository
 from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
+)
+from lexlocal.infrastructure.persistence.sqlite_local_model_repository import (
+    SQLiteResolvedModelRepository,
 )
 from lexlocal.infrastructure.persistence.sqlite_workspace_repository import (
     SQLiteWorkspaceRepository,
@@ -37,6 +41,7 @@ class SQLiteUnitOfWork(UnitOfWork):
         self._name_persistence = name_persistence
         self._connection: sqlite3.Connection | None = None
         self._workspace_repository: SQLiteWorkspaceRepository | None = None
+        self._local_model_repository: SQLiteResolvedModelRepository | None = None
         self._state = _UnitOfWorkState.INACTIVE
 
     @property
@@ -48,6 +53,17 @@ class SQLiteUnitOfWork(UnitOfWork):
         ):
             raise RuntimeError("Unit of Work transaction is not active")
         return self._workspace_repository
+
+    @property
+    def local_models(self) -> ResolvedModelRepository:
+        """Return the local-model repository bound to the active transaction."""
+
+        if (
+            self._state is not _UnitOfWorkState.ACTIVE
+            or self._local_model_repository is None
+        ):
+            raise RuntimeError("Unit of Work transaction is not active")
+        return self._local_model_repository
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -77,6 +93,7 @@ class SQLiteUnitOfWork(UnitOfWork):
             connection,
             self._name_persistence,
         )
+        self._local_model_repository = SQLiteResolvedModelRepository(connection)
         self._state = _UnitOfWorkState.ACTIVE
         return self
 
@@ -100,6 +117,7 @@ class SQLiteUnitOfWork(UnitOfWork):
             connection.close()
             self._connection = None
             self._workspace_repository = None
+            self._local_model_repository = None
             self._state = _UnitOfWorkState.INACTIVE
 
     def commit(self) -> None:
@@ -111,6 +129,7 @@ class SQLiteUnitOfWork(UnitOfWork):
             connection.close()
         finally:
             self._workspace_repository = None
+            self._local_model_repository = None
             self._state = _UnitOfWorkState.COMMITTED
 
     def rollback(self) -> None:
@@ -122,4 +141,5 @@ class SQLiteUnitOfWork(UnitOfWork):
             connection.close()
         finally:
             self._workspace_repository = None
+            self._local_model_repository = None
             self._state = _UnitOfWorkState.ROLLED_BACK

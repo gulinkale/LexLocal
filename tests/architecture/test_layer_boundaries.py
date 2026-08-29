@@ -25,6 +25,8 @@ _LAYER_RULES = (
             "lexlocal.infrastructure",
             "lexlocal.presentation",
             "lexlocal.bootstrap",
+            "foundry_local_sdk",
+            "openai",
         ),
     ),
     (

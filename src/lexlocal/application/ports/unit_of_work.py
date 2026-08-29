@@ -3,6 +3,7 @@
 from types import TracebackType
 from typing import Protocol, Self
 
+from .local_models import ResolvedModelRepository
 from .workspaces import WorkspaceRepository
 
 
@@ -12,6 +13,12 @@ class UnitOfWork(Protocol):
     @property
     def workspaces(self) -> WorkspaceRepository:
         """Return the workspace repository bound to the active transaction."""
+
+        ...
+
+    @property
+    def local_models(self) -> ResolvedModelRepository:
+        """Return the resolved-model repository bound to the active transaction."""
 
         ...
 

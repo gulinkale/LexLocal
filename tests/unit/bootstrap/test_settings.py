@@ -1,3 +1,4 @@
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ def test_load_settings_uses_defaults() -> None:
     assert settings.data_dir == Path.home() / ".lexlocal"
     assert settings.log_dir == settings.data_dir / "logs"
     assert settings.security_provider == "insecure-development-only"
+    assert settings.chat_model_alias == "qwen3-4b"
+    assert settings.embedding_model_alias == "qwen3-embedding-0.6b"
 
 
 def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
@@ -23,6 +26,8 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
             "LEXLOCAL_LOG_LEVEL": "debug",
             "LEXLOCAL_DATA_DIR": str(tmp_path),
             "LEXLOCAL_SECURITY_PROVIDER": "explicit-provider",
+            "LEXLOCAL_CHAT_MODEL_ALIAS": "  explicit-chat  ",
+            "LEXLOCAL_EMBEDDING_MODEL_ALIAS": "explicit-embedding:2",
         }
     )
 
@@ -30,6 +35,8 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
     assert settings.log_level == "DEBUG"
     assert settings.data_dir == tmp_path
     assert settings.security_provider == "explicit-provider"
+    assert settings.chat_model_alias == "explicit-chat"
+    assert settings.embedding_model_alias == "explicit-embedding:2"
 
 
 @pytest.mark.parametrize("environment", ["development", "test"])
@@ -61,6 +68,30 @@ def test_load_settings_preserves_unknown_provider_for_later_selection() -> None:
     )
 
     assert settings.security_provider == "unknown-provider"
+
+
+@pytest.mark.parametrize(
+    "variable",
+    ["LEXLOCAL_CHAT_MODEL_ALIAS", "LEXLOCAL_EMBEDDING_MODEL_ALIAS"],
+)
+@pytest.mark.parametrize("invalid_alias", ["", "   ", "remote/model", "https://model"])
+def test_load_settings_rejects_invalid_model_alias(
+    variable: str,
+    invalid_alias: str,
+) -> None:
+    with pytest.raises(ValueError, match="must be a non-empty local model alias"):
+        load_settings({variable: invalid_alias})
+
+
+def test_settings_have_no_remote_or_cloud_configuration_surface() -> None:
+    field_names = {field.name for field in fields(load_settings({}))}
+
+    assert not field_names & {
+        "endpoint",
+        "cloud_provider",
+        "azure_endpoint",
+        "openai_api_key",
+    }
 
 
 @pytest.mark.parametrize(

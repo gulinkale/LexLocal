@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 from PySide6.QtWidgets import QApplication
 
+from lexlocal.bootstrap.foundry import compose_local_models
 from lexlocal.bootstrap.logging_setup import configure_logging
 from lexlocal.bootstrap.persistence import (
     compose_workspace_application,
@@ -45,11 +46,21 @@ def run(argv: Sequence[str] | None = None) -> int:
         settings,
         connection_factory,
     )
+    local_models = compose_local_models(settings, connection_factory)
 
-    application, main_window = create_application(argv)
-    main_window.show()
+    try:
+        application, main_window = create_application(argv)
+        main_window.show()
 
-    exit_code = application.exec()
+        exit_code = application.exec()
+    except BaseException:
+        try:
+            local_models.close()
+        except Exception:
+            pass
+        raise
+    else:
+        local_models.close()
 
     logger.info("Application stopped; exit_code=%d", exit_code)
 

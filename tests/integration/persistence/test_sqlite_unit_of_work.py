@@ -297,3 +297,37 @@ def test_unit_of_work_can_be_reused_after_scope_exit(tmp_path: Path) -> None:
         unit_of_work.commit()
 
     assert read_values(factory) == ["first-scope", "second-scope"]
+
+
+def test_local_model_repository_is_available_only_in_active_scope(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = SQLiteUnitOfWork(SQLiteConnectionFactory(tmp_path / "lexlocal.db"))
+
+    with pytest.raises(RuntimeError, match="transaction is not active"):
+        _ = unit_of_work.local_models
+
+    with unit_of_work:
+        repository = unit_of_work.local_models
+        unit_of_work.rollback()
+
+        with pytest.raises(RuntimeError, match="transaction is not active"):
+            _ = unit_of_work.local_models
+
+    assert repository is not None
+
+
+def test_reused_unit_of_work_creates_fresh_local_model_repository(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = SQLiteUnitOfWork(SQLiteConnectionFactory(tmp_path / "lexlocal.db"))
+
+    with unit_of_work:
+        first_repository = unit_of_work.local_models
+        unit_of_work.rollback()
+
+    with unit_of_work:
+        second_repository = unit_of_work.local_models
+        unit_of_work.rollback()
+
+    assert first_repository is not second_repository
