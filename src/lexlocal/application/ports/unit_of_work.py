@@ -3,6 +3,7 @@
 from types import TracebackType
 from typing import Protocol, Self
 
+from .ingestion import IngestionRepository
 from .local_models import ResolvedModelRepository
 from .workspaces import WorkspaceRepository
 
@@ -19,6 +20,12 @@ class UnitOfWork(Protocol):
     @property
     def local_models(self) -> ResolvedModelRepository:
         """Return the resolved-model repository bound to the active transaction."""
+
+        ...
+
+    @property
+    def ingestion(self) -> IngestionRepository:
+        """Return the ingestion repository bound to the active transaction."""
 
         ...
 

@@ -12,7 +12,11 @@ from lexlocal.infrastructure.persistence.migration_runner import (
     MigrationExecutionError,
     MigrationHistoryError,
 )
-from lexlocal.infrastructure.persistence.migrations import Migration
+from lexlocal.infrastructure.persistence.migrations import (
+    Migration,
+    default_migrations_dir,
+    discover_migrations,
+)
 from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
 )
@@ -59,7 +63,11 @@ def test_initialize_persistence_uses_database_path_from_settings(
     finally:
         connection.close()
 
-    assert [int(row["version"]) for row in applied_versions] == [1]
+    expected_versions = [
+        migration.version
+        for migration in discover_migrations(default_migrations_dir())
+    ]
+    assert [int(row["version"]) for row in applied_versions] == expected_versions
 
 
 @pytest.mark.parametrize("migration_sql", ["SELECT 1;", "SELECT missing_column;"])
