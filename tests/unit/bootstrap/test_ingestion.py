@@ -51,6 +51,8 @@ def test_composition_exposes_application_use_case_and_storage_port(
 
     assert isinstance(composition.import_pdf, ImportSyntheticPdf)
     assert composition.controlled_source_storage is storage
+    assert callable(composition.sensitive_payload_codec.encode)
+    assert callable(composition.sensitive_payload_codec.decode)
 
 
 def test_production_rejects_insecure_composition_before_dependency_selection(

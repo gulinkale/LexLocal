@@ -9,8 +9,14 @@ import pytest
 from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
 )
+from lexlocal.infrastructure.persistence.sqlite_processing_repository import (
+    SQLiteProcessingRepository,
+)
 from lexlocal.infrastructure.persistence.sqlite_unit_of_work import (
     SQLiteUnitOfWork as _SQLiteUnitOfWork,
+)
+from lexlocal.infrastructure.security.insecure_development import (
+    InsecureDevelopmentOnlyPayloadCodec,
 )
 from lexlocal.infrastructure.security.insecure_development_workspace import (
     InsecureDevelopmentOnlyWorkspaceNamePersistence,
@@ -180,6 +186,32 @@ def test_connection_access_outside_scope_fails(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="transaction is not active"):
         _ = unit_of_work.connection
+
+
+def test_processing_repository_fails_closed_until_it_is_configured(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = SQLiteUnitOfWork(SQLiteConnectionFactory(tmp_path / "lexlocal.db"))
+
+    with unit_of_work:
+        with pytest.raises(RuntimeError, match="processing repository is not configured"):
+            _ = unit_of_work.processing
+
+
+def test_configured_processing_repository_is_bound_only_in_active_scope(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = _SQLiteUnitOfWork(
+        SQLiteConnectionFactory(tmp_path / "lexlocal.db"),
+        InsecureDevelopmentOnlyWorkspaceNamePersistence(),
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+
+    with unit_of_work:
+        assert isinstance(unit_of_work.processing, SQLiteProcessingRepository)
+
+    with pytest.raises(RuntimeError, match="transaction is not active"):
+        _ = unit_of_work.processing
 
 
 @pytest.mark.parametrize("operation", ["commit", "rollback"])
