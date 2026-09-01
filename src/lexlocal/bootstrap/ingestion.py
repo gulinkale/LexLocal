@@ -11,7 +11,10 @@ from lexlocal.application.ports.ingestion import (
     PdfInspector,
     StoredBlobId,
 )
-from lexlocal.application.ports.security import ControlledSourceStorage
+from lexlocal.application.ports.security import (
+    ControlledSourceStorage,
+    SensitivePayloadCodec,
+)
 from lexlocal.application.ports.unit_of_work import UnitOfWork
 from lexlocal.application.workspaces import ActiveWorkspaceScope
 from lexlocal.bootstrap.security import create_security_providers
@@ -34,10 +37,11 @@ from lexlocal.infrastructure.security.insecure_development_workspace import (
 
 @dataclass(frozen=True, slots=True)
 class IngestionApplicationComposition:
-    """Expose the ingestion use case and its controlled-storage boundary."""
+    """Expose ingestion and its shared Application-owned security boundaries."""
 
     import_pdf: ImportSyntheticPdf
     controlled_source_storage: ControlledSourceStorage
+    sensitive_payload_codec: SensitivePayloadCodec
 
 
 def compose_ingestion_application(
@@ -87,7 +91,7 @@ def compose_ingestion_application(
         stored_blob_id_factory=stored_blob_id_factory or _new_stored_blob_id,
         clock=clock or _utc_millisecond_clock,
     )
-    return IngestionApplicationComposition(import_pdf, storage)
+    return IngestionApplicationComposition(import_pdf, storage, security.payload_codec)
 
 
 def _new_document_id() -> DocumentId:
