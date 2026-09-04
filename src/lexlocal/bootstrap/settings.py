@@ -11,6 +11,8 @@ _ALLOWED_LOG_LEVELS = frozenset(
 _INSECURE_DEVELOPMENT_PROVIDER = "insecure-development-only"
 _DEFAULT_CHAT_MODEL_ALIAS = "qwen3-4b"
 _DEFAULT_EMBEDDING_MODEL_ALIAS = "qwen3-embedding-0.6b"
+_DEFAULT_INDEX_CHUNK_SIZE = 1000
+_DEFAULT_INDEX_CHUNK_OVERLAP = 200
 _MODEL_ALIAS_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 
 
@@ -25,6 +27,8 @@ class AppSettings:
     security_provider: str = ""
     chat_model_alias: str = _DEFAULT_CHAT_MODEL_ALIAS
     embedding_model_alias: str = _DEFAULT_EMBEDDING_MODEL_ALIAS
+    index_chunk_size: int = _DEFAULT_INDEX_CHUNK_SIZE
+    index_chunk_overlap: int = _DEFAULT_INDEX_CHUNK_OVERLAP
 
     @property
     def log_dir(self) -> Path:
@@ -55,6 +59,23 @@ def _load_model_alias(
             f"{variable} must be a non-empty local model alias"
         )
     return alias
+
+
+def _load_non_negative_integer(
+    values: Mapping[str, str],
+    variable: str,
+    default: int,
+) -> int:
+    configured = values.get(variable)
+    if configured is None:
+        return default
+    try:
+        value = int(configured)
+    except (TypeError, ValueError):
+        raise ValueError(f"{variable} must be an integer") from None
+    if value < 0:
+        raise ValueError(f"{variable} must be non-negative")
+    return value
 
 
 def load_settings(
@@ -105,6 +126,18 @@ def load_settings(
         "LEXLOCAL_EMBEDDING_MODEL_ALIAS",
         _DEFAULT_EMBEDDING_MODEL_ALIAS,
     )
+    index_chunk_size = _load_non_negative_integer(
+        values,
+        "LEXLOCAL_INDEX_CHUNK_SIZE",
+        _DEFAULT_INDEX_CHUNK_SIZE,
+    )
+    index_chunk_overlap = _load_non_negative_integer(
+        values,
+        "LEXLOCAL_INDEX_CHUNK_OVERLAP",
+        _DEFAULT_INDEX_CHUNK_OVERLAP,
+    )
+    if index_chunk_size < 1 or index_chunk_overlap >= index_chunk_size:
+        raise ValueError("index chunk configuration is invalid")
 
     return AppSettings(
         app_name="LexLocal",
@@ -114,4 +147,6 @@ def load_settings(
         security_provider=security_provider,
         chat_model_alias=chat_model_alias,
         embedding_model_alias=embedding_model_alias,
+        index_chunk_size=index_chunk_size,
+        index_chunk_overlap=index_chunk_overlap,
     )

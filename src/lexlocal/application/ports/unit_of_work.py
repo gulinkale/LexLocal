@@ -3,6 +3,7 @@
 from types import TracebackType
 from typing import Protocol, Self
 
+from .indexing import IndexRepository
 from .ingestion import IngestionRepository
 from .local_models import ResolvedModelRepository
 from .processing import ProcessingRepository
@@ -33,6 +34,12 @@ class UnitOfWork(Protocol):
     @property
     def processing(self) -> ProcessingRepository:
         """Return the processing repository bound to the active transaction."""
+
+        ...
+
+    @property
+    def indexing(self) -> IndexRepository:
+        """Return the index repository bound to the active transaction."""
 
         ...
 

@@ -5,6 +5,7 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Self
 
+from lexlocal.application.ports.indexing import IndexRepository
 from lexlocal.application.ports.ingestion import IngestionRepository
 from lexlocal.application.ports.local_models import ResolvedModelRepository
 from lexlocal.application.ports.processing import ProcessingRepository
@@ -13,6 +14,9 @@ from lexlocal.application.ports.unit_of_work import UnitOfWork
 from lexlocal.application.ports.workspaces import WorkspaceRepository
 from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
+)
+from lexlocal.infrastructure.persistence.sqlite_index_repository import (
+    SQLiteIndexRepository,
 )
 from lexlocal.infrastructure.persistence.sqlite_ingestion_repository import (
     SQLiteIngestionRepository,
@@ -55,6 +59,7 @@ class SQLiteUnitOfWork(UnitOfWork):
         self._local_model_repository: SQLiteResolvedModelRepository | None = None
         self._ingestion_repository: SQLiteIngestionRepository | None = None
         self._processing_repository: SQLiteProcessingRepository | None = None
+        self._index_repository: SQLiteIndexRepository | None = None
         self._state = _UnitOfWorkState.INACTIVE
 
     @property
@@ -96,6 +101,16 @@ class SQLiteUnitOfWork(UnitOfWork):
         return self._processing_repository
 
     @property
+    def indexing(self) -> IndexRepository:
+        """Return the configured index repository for this transaction."""
+
+        if self._state is not _UnitOfWorkState.ACTIVE:
+            raise RuntimeError("Unit of Work transaction is not active")
+        if self._index_repository is None:
+            raise RuntimeError("index repository is not configured")
+        return self._index_repository
+
+    @property
     def connection(self) -> sqlite3.Connection:
         """Return the active SQLite connection."""
 
@@ -130,6 +145,11 @@ class SQLiteUnitOfWork(UnitOfWork):
             if self._processing_payload_codec is not None
             else None
         )
+        self._index_repository = (
+            SQLiteIndexRepository(connection, self._processing_payload_codec)
+            if self._processing_payload_codec is not None
+            else None
+        )
         self._state = _UnitOfWorkState.ACTIVE
         return self
 
@@ -156,6 +176,7 @@ class SQLiteUnitOfWork(UnitOfWork):
             self._local_model_repository = None
             self._ingestion_repository = None
             self._processing_repository = None
+            self._index_repository = None
             self._state = _UnitOfWorkState.INACTIVE
 
     def commit(self) -> None:
@@ -170,6 +191,7 @@ class SQLiteUnitOfWork(UnitOfWork):
             self._local_model_repository = None
             self._ingestion_repository = None
             self._processing_repository = None
+            self._index_repository = None
             self._state = _UnitOfWorkState.COMMITTED
 
     def rollback(self) -> None:
@@ -184,4 +206,5 @@ class SQLiteUnitOfWork(UnitOfWork):
             self._local_model_repository = None
             self._ingestion_repository = None
             self._processing_repository = None
+            self._index_repository = None
             self._state = _UnitOfWorkState.ROLLED_BACK

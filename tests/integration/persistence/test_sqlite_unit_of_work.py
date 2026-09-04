@@ -9,6 +9,9 @@ import pytest
 from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
 )
+from lexlocal.infrastructure.persistence.sqlite_index_repository import (
+    SQLiteIndexRepository,
+)
 from lexlocal.infrastructure.persistence.sqlite_processing_repository import (
     SQLiteProcessingRepository,
 )
@@ -212,6 +215,30 @@ def test_configured_processing_repository_is_bound_only_in_active_scope(
 
     with pytest.raises(RuntimeError, match="transaction is not active"):
         _ = unit_of_work.processing
+
+
+def test_index_repository_fails_closed_until_it_is_configured(tmp_path: Path) -> None:
+    unit_of_work = SQLiteUnitOfWork(SQLiteConnectionFactory(tmp_path / "lexlocal.db"))
+
+    with unit_of_work:
+        with pytest.raises(RuntimeError, match="index repository is not configured"):
+            _ = unit_of_work.indexing
+
+
+def test_configured_index_repository_is_bound_only_in_active_scope(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = _SQLiteUnitOfWork(
+        SQLiteConnectionFactory(tmp_path / "lexlocal.db"),
+        InsecureDevelopmentOnlyWorkspaceNamePersistence(),
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+
+    with unit_of_work:
+        assert isinstance(unit_of_work.indexing, SQLiteIndexRepository)
+
+    with pytest.raises(RuntimeError, match="transaction is not active"):
+        _ = unit_of_work.indexing
 
 
 @pytest.mark.parametrize("operation", ["commit", "rollback"])
