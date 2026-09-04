@@ -17,6 +17,8 @@ def test_load_settings_uses_defaults() -> None:
     assert settings.security_provider == "insecure-development-only"
     assert settings.chat_model_alias == "qwen3-4b"
     assert settings.embedding_model_alias == "qwen3-embedding-0.6b"
+    assert settings.index_chunk_size == 1000
+    assert settings.index_chunk_overlap == 200
 
 
 def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
@@ -28,6 +30,8 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
             "LEXLOCAL_SECURITY_PROVIDER": "explicit-provider",
             "LEXLOCAL_CHAT_MODEL_ALIAS": "  explicit-chat  ",
             "LEXLOCAL_EMBEDDING_MODEL_ALIAS": "explicit-embedding:2",
+            "LEXLOCAL_INDEX_CHUNK_SIZE": " 256 ",
+            "LEXLOCAL_INDEX_CHUNK_OVERLAP": "32",
         }
     )
 
@@ -37,6 +41,8 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
     assert settings.security_provider == "explicit-provider"
     assert settings.chat_model_alias == "explicit-chat"
     assert settings.embedding_model_alias == "explicit-embedding:2"
+    assert settings.index_chunk_size == 256
+    assert settings.index_chunk_overlap == 32
 
 
 @pytest.mark.parametrize("environment", ["development", "test"])
@@ -107,3 +113,22 @@ def test_load_settings_rejects_invalid_values(
 ) -> None:
     with pytest.raises(ValueError):
         load_settings({variable: value})
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {"LEXLOCAL_INDEX_CHUNK_SIZE": "0"},
+        {"LEXLOCAL_INDEX_CHUNK_SIZE": "invalid"},
+        {"LEXLOCAL_INDEX_CHUNK_OVERLAP": "-1"},
+        {
+            "LEXLOCAL_INDEX_CHUNK_SIZE": "200",
+            "LEXLOCAL_INDEX_CHUNK_OVERLAP": "200",
+        },
+    ],
+)
+def test_load_settings_rejects_invalid_index_chunk_configuration(
+    environ: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError):
+        load_settings(environ)
