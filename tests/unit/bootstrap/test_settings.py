@@ -19,6 +19,7 @@ def test_load_settings_uses_defaults() -> None:
     assert settings.embedding_model_alias == "qwen3-embedding-0.6b"
     assert settings.index_chunk_size == 1000
     assert settings.index_chunk_overlap == 200
+    assert settings.embedding_batch_size == 32
 
 
 def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
@@ -32,6 +33,7 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
             "LEXLOCAL_EMBEDDING_MODEL_ALIAS": "explicit-embedding:2",
             "LEXLOCAL_INDEX_CHUNK_SIZE": " 256 ",
             "LEXLOCAL_INDEX_CHUNK_OVERLAP": "32",
+            "LEXLOCAL_EMBEDDING_BATCH_SIZE": "16",
         }
     )
 
@@ -43,6 +45,7 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
     assert settings.embedding_model_alias == "explicit-embedding:2"
     assert settings.index_chunk_size == 256
     assert settings.index_chunk_overlap == 32
+    assert settings.embedding_batch_size == 16
 
 
 @pytest.mark.parametrize("environment", ["development", "test"])
@@ -132,3 +135,19 @@ def test_load_settings_rejects_invalid_index_chunk_configuration(
 ) -> None:
     with pytest.raises(ValueError):
         load_settings(environ)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["0", "-1", "1025", "invalid", "1.5"],
+)
+def test_load_settings_rejects_invalid_embedding_batch_size(value: str) -> None:
+    with pytest.raises(ValueError, match="LEXLOCAL_EMBEDDING_BATCH_SIZE"):
+        load_settings({"LEXLOCAL_EMBEDDING_BATCH_SIZE": value})
+
+
+@pytest.mark.parametrize("value", ["1", "1024"])
+def test_load_settings_accepts_bounded_embedding_batch_size(value: str) -> None:
+    settings = load_settings({"LEXLOCAL_EMBEDDING_BATCH_SIZE": value})
+
+    assert settings.embedding_batch_size == int(value)

@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from lexlocal.application.ports.local_models import (
+    EmbeddingProvider,
     LocalModelIncompatible,
     LocalModelInferenceError,
     LocalModelRuntimeError,
@@ -248,6 +249,107 @@ def test_embedding_health_captures_dimension_and_inference_reuses_handle() -> No
     assert model.load_calls == 2
     assert model.unload_calls == 1
     runtime.close()
+    assert model.unload_calls == 2
+
+
+def test_embedding_multi_input_preserves_positional_mapping_and_sdk_free_values() -> None:
+    client = FakeEmbeddingClient(embedding_response([1.0, 0.0, 0.0]))
+    model = FakeModel(embedding_client=client)
+    runtime, status = resolve_embedding(model)
+    provider: EmbeddingProvider = runtime.embedding_provider(status)
+    client.response = embedding_response([3, 0, 4], [-1.0, 2.5, 0.0])
+
+    vectors = provider.embed(["synthetic first", "synthetic second"])
+
+    assert provider.status is status
+    assert status.readiness is ModelReadiness.READY
+    assert status.model.capability is ModelCapability.EMBEDDING
+    assert status.model.id == EMBEDDING_ID
+    assert status.model.dimensions == 3
+    assert client.inputs[-1] == ["synthetic first", "synthetic second"]
+    assert vectors == [[3.0, 0.0, 4.0], [-1.0, 2.5, 0.0]]
+    assert all(isinstance(vector, list) for vector in vectors)
+    assert all(type(value) is float for vector in vectors for value in vector)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        embedding_response([1.0, 2.0]),
+        embedding_response([1.0, 2.0], [3.0, 4.0], [5.0, 6.0]),
+    ],
+)
+def test_embedding_inference_rejects_missing_or_extra_positional_outputs(
+    response: object,
+) -> None:
+    client = FakeEmbeddingClient(embedding_response([1.0, 2.0]))
+    model = FakeModel(embedding_client=client)
+    runtime, status = resolve_embedding(model)
+    client.response = response
+
+    with pytest.raises(LocalModelInferenceError) as captured:
+        runtime.embedding_provider(status).embed(["synthetic first", "synthetic second"])
+
+    assert str(captured.value) == "local embedding inference failed"
+    assert captured.value.__cause__ is None
+    assert model.unload_calls == 2
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        SimpleNamespace(data=[SimpleNamespace()]),
+        embedding_response([True, 1.0]),
+        embedding_response([object(), 1.0]),
+        embedding_response([math.nan, 1.0]),
+        embedding_response([math.inf, 1.0]),
+        embedding_response([-math.inf, 1.0]),
+    ],
+)
+def test_embedding_inference_rejects_malformed_values_with_sanitized_failure(
+    response: object,
+) -> None:
+    client = FakeEmbeddingClient(embedding_response([1.0, 2.0]))
+    model = FakeModel(embedding_client=client)
+    runtime, status = resolve_embedding(model)
+    client.response = response
+
+    with pytest.raises(LocalModelInferenceError) as captured:
+        runtime.embedding_provider(status).embed(["anonymous synthetic input"])
+
+    assert str(captured.value) == "local embedding inference failed"
+    assert captured.value.__cause__ is None
+    assert model.unload_calls == 2
+
+
+def test_embedding_provider_rejects_status_not_exactly_bound_to_runtime() -> None:
+    client = FakeEmbeddingClient(embedding_response([1.0, 2.0]))
+    model = FakeModel(embedding_client=client)
+    runtime, status = resolve_embedding(model)
+    forged_status = LocalModelStatus(
+        model=status.model,
+        readiness=ModelReadiness.READY,
+        execution_provider="DifferentExecutionProvider",
+    )
+
+    with pytest.raises(LocalModelRuntimeError, match="status is not resolved") as captured:
+        runtime.embedding_provider(forged_status)
+
+    assert captured.value.__cause__ is None
+    assert model.load_calls == model.unload_calls == 1
+
+
+def test_embedding_runtime_failure_is_sanitized_and_unloads() -> None:
+    client = FakeEmbeddingClient(embedding_response([1.0, 2.0]))
+    model = FakeModel(embedding_client=client)
+    runtime, status = resolve_embedding(model)
+    client.error = RuntimeError("native vector, cache path, and provider detail")
+
+    with pytest.raises(LocalModelInferenceError) as captured:
+        runtime.embedding_provider(status).embed(["private synthetic input"])
+
+    assert str(captured.value) == "local embedding inference failed"
+    assert captured.value.__cause__ is None
     assert model.unload_calls == 2
 
 
