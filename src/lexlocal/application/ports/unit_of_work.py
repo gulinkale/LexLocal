@@ -3,6 +3,7 @@
 from types import TracebackType
 from typing import Protocol, Self
 
+from .embeddings import EmbeddingRepository
 from .indexing import IndexRepository
 from .ingestion import IngestionRepository
 from .local_models import ResolvedModelRepository
@@ -40,6 +41,12 @@ class UnitOfWork(Protocol):
     @property
     def indexing(self) -> IndexRepository:
         """Return the index repository bound to the active transaction."""
+
+        ...
+
+    @property
+    def embeddings(self) -> EmbeddingRepository:
+        """Return the embedding repository bound to the active transaction."""
 
         ...
 

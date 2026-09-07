@@ -13,6 +13,8 @@ _DEFAULT_CHAT_MODEL_ALIAS = "qwen3-4b"
 _DEFAULT_EMBEDDING_MODEL_ALIAS = "qwen3-embedding-0.6b"
 _DEFAULT_INDEX_CHUNK_SIZE = 1000
 _DEFAULT_INDEX_CHUNK_OVERLAP = 200
+_DEFAULT_EMBEDDING_BATCH_SIZE = 32
+_MAX_EMBEDDING_BATCH_SIZE = 1024
 _MODEL_ALIAS_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 
 
@@ -29,6 +31,7 @@ class AppSettings:
     embedding_model_alias: str = _DEFAULT_EMBEDDING_MODEL_ALIAS
     index_chunk_size: int = _DEFAULT_INDEX_CHUNK_SIZE
     index_chunk_overlap: int = _DEFAULT_INDEX_CHUNK_OVERLAP
+    embedding_batch_size: int = _DEFAULT_EMBEDDING_BATCH_SIZE
 
     @property
     def log_dir(self) -> Path:
@@ -75,6 +78,24 @@ def _load_non_negative_integer(
         raise ValueError(f"{variable} must be an integer") from None
     if value < 0:
         raise ValueError(f"{variable} must be non-negative")
+    return value
+
+
+def _load_positive_bounded_integer(
+    values: Mapping[str, str],
+    variable: str,
+    default: int,
+    maximum: int,
+) -> int:
+    configured = values.get(variable)
+    if configured is None:
+        return default
+    try:
+        value = int(configured)
+    except (TypeError, ValueError):
+        raise ValueError(f"{variable} must be an integer") from None
+    if value < 1 or value > maximum:
+        raise ValueError(f"{variable} must be between 1 and {maximum}")
     return value
 
 
@@ -138,6 +159,12 @@ def load_settings(
     )
     if index_chunk_size < 1 or index_chunk_overlap >= index_chunk_size:
         raise ValueError("index chunk configuration is invalid")
+    embedding_batch_size = _load_positive_bounded_integer(
+        values,
+        "LEXLOCAL_EMBEDDING_BATCH_SIZE",
+        _DEFAULT_EMBEDDING_BATCH_SIZE,
+        _MAX_EMBEDDING_BATCH_SIZE,
+    )
 
     return AppSettings(
         app_name="LexLocal",
@@ -149,4 +176,5 @@ def load_settings(
         embedding_model_alias=embedding_model_alias,
         index_chunk_size=index_chunk_size,
         index_chunk_overlap=index_chunk_overlap,
+        embedding_batch_size=embedding_batch_size,
     )

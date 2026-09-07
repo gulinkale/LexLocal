@@ -134,12 +134,21 @@ question, receive a grounded answer, and open the cited page and passage.
   - Add deterministic boundary, overlap, metadata, activation, rollback, and repeat-run tests.
   - Complete when the active document version has exactly one compatible active index generation.
 
-- EMBEDDING-001: Generate and persist local document and query embeddings
-  - Use the same resolved Foundry-compatible embedding model for chunks and queries.
-  - Store normalized `float32` vector payloads, dimensions, model identity, and compatibility metadata through the payload boundary.
-  - Validate dimensions and reject mismatched, non-finite, corrupt, or incompatible vectors.
-  - Add serialization round-trip, batching, identity-mismatch, and fake-provider failure tests.
-  - Complete when synthetic chunks and questions produce compatible persisted vectors without a cloud dependency.
+- EMBEDDING-001: Generate and persist local chunk embeddings and generate compatible query embeddings
+  - Consume INDEX-001’s exact ordered `StagingEmbeddingHandoff`.
+  - Use the same exact resolved Foundry-compatible embedding model identity for document chunks and queries.
+  - Generate chunk embeddings locally in batches with no cloud fallback.
+  - Validate provider output before persistence: expected count/order, dimensions, finite values, non-zero norm, model identity, and compatibility metadata.
+  - Normalize vectors to unit length and canonical `float32`, then serialize them deterministically for persistence.
+  - Persist chunk vector payloads, dimensions, dtype, model identity, and compatibility metadata through the existing sensitive-payload boundary.
+  - Persist embeddings only under the exact workspace / document version / STAGING index generation / chunk ownership graph.
+  - Make retry/restart idempotent: repeated or interrupted execution must not create duplicate or partial compatible embedding sets.
+  - Generate query embeddings locally through the same Application-owned provider contract and exact compatible model identity; keep query vectors ephemeral in memory for M1 rather than persisting them.
+  - Reject missing/extra provider outputs, dimension mismatch, non-finite or zero-norm vectors, corrupt payloads, incompatible model/dtype metadata, ownership substitution, and provider failures with sanitized errors.
+  - After and only after the complete compatible chunk embedding set is persisted, invoke the existing INDEX-001 guarded finalization boundary; do not implement a second activation path.
+  - Add tests for normalization, deterministic serialization round-trip, batching, model/dimension/dtype mismatch, non-finite and zero-norm vectors, corrupt payloads, provider partial/failure results, ownership isolation, retry/idempotency, rollback, query compatibility, and guarded-finalizer invocation.
+  - Complete when synthetic STAGING chunks produce one complete compatible persisted local embedding set and synthetic questions produce compatible local query vectors without any cloud dependency or fallback.
+
 
 - RAG-001: Implement workspace-scoped cosine top-K retrieval and evidence persistence
   - Load only eligible active-version vectors for the active workspace and optional document scope.
