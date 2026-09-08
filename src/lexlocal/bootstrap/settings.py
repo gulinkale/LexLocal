@@ -15,6 +15,11 @@ _DEFAULT_INDEX_CHUNK_SIZE = 1000
 _DEFAULT_INDEX_CHUNK_OVERLAP = 200
 _DEFAULT_EMBEDDING_BATCH_SIZE = 32
 _MAX_EMBEDDING_BATCH_SIZE = 1024
+_DEFAULT_RETRIEVAL_TOP_K = 5
+_MAX_RETRIEVAL_TOP_K = 20
+_DEFAULT_RETRIEVAL_MIN_SIMILARITY = 0.0
+_MIN_RETRIEVAL_SIMILARITY = -1.0
+_MAX_RETRIEVAL_SIMILARITY = 1.0
 _MODEL_ALIAS_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 
 
@@ -32,6 +37,8 @@ class AppSettings:
     index_chunk_size: int = _DEFAULT_INDEX_CHUNK_SIZE
     index_chunk_overlap: int = _DEFAULT_INDEX_CHUNK_OVERLAP
     embedding_batch_size: int = _DEFAULT_EMBEDDING_BATCH_SIZE
+    retrieval_top_k: int = _DEFAULT_RETRIEVAL_TOP_K
+    retrieval_min_similarity: float = _DEFAULT_RETRIEVAL_MIN_SIMILARITY
 
     @property
     def log_dir(self) -> Path:
@@ -96,6 +103,25 @@ def _load_positive_bounded_integer(
         raise ValueError(f"{variable} must be an integer") from None
     if value < 1 or value > maximum:
         raise ValueError(f"{variable} must be between 1 and {maximum}")
+    return value
+
+
+def _load_bounded_float(
+    values: Mapping[str, str],
+    variable: str,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    configured = values.get(variable)
+    if configured is None:
+        return default
+    try:
+        value = float(configured)
+    except (TypeError, ValueError):
+        raise ValueError(f"{variable} must be a number") from None
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{variable} must be between {minimum} and {maximum}")
     return value
 
 
@@ -165,6 +191,19 @@ def load_settings(
         _DEFAULT_EMBEDDING_BATCH_SIZE,
         _MAX_EMBEDDING_BATCH_SIZE,
     )
+    retrieval_top_k = _load_positive_bounded_integer(
+        values,
+        "LEXLOCAL_RETRIEVAL_TOP_K",
+        _DEFAULT_RETRIEVAL_TOP_K,
+        _MAX_RETRIEVAL_TOP_K,
+    )
+    retrieval_min_similarity = _load_bounded_float(
+        values,
+        "LEXLOCAL_RETRIEVAL_MIN_SIMILARITY",
+        _DEFAULT_RETRIEVAL_MIN_SIMILARITY,
+        _MIN_RETRIEVAL_SIMILARITY,
+        _MAX_RETRIEVAL_SIMILARITY,
+    )
 
     return AppSettings(
         app_name="LexLocal",
@@ -177,4 +216,6 @@ def load_settings(
         index_chunk_size=index_chunk_size,
         index_chunk_overlap=index_chunk_overlap,
         embedding_batch_size=embedding_batch_size,
+        retrieval_top_k=retrieval_top_k,
+        retrieval_min_similarity=retrieval_min_similarity,
     )

@@ -20,6 +20,8 @@ def test_load_settings_uses_defaults() -> None:
     assert settings.index_chunk_size == 1000
     assert settings.index_chunk_overlap == 200
     assert settings.embedding_batch_size == 32
+    assert settings.retrieval_top_k == 5
+    assert settings.retrieval_min_similarity == 0.0
 
 
 def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
@@ -34,6 +36,8 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
             "LEXLOCAL_INDEX_CHUNK_SIZE": " 256 ",
             "LEXLOCAL_INDEX_CHUNK_OVERLAP": "32",
             "LEXLOCAL_EMBEDDING_BATCH_SIZE": "16",
+            "LEXLOCAL_RETRIEVAL_TOP_K": "7",
+            "LEXLOCAL_RETRIEVAL_MIN_SIMILARITY": "-0.25",
         }
     )
 
@@ -46,6 +50,8 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
     assert settings.index_chunk_size == 256
     assert settings.index_chunk_overlap == 32
     assert settings.embedding_batch_size == 16
+    assert settings.retrieval_top_k == 7
+    assert settings.retrieval_min_similarity == -0.25
 
 
 @pytest.mark.parametrize("environment", ["development", "test"])
@@ -151,3 +157,29 @@ def test_load_settings_accepts_bounded_embedding_batch_size(value: str) -> None:
     settings = load_settings({"LEXLOCAL_EMBEDDING_BATCH_SIZE": value})
 
     assert settings.embedding_batch_size == int(value)
+
+
+@pytest.mark.parametrize("value", ["true", "0", "21", "1.0", ""])
+def test_load_settings_rejects_invalid_retrieval_top_k(value: str) -> None:
+    with pytest.raises(ValueError, match="LEXLOCAL_RETRIEVAL_TOP_K"):
+        load_settings({"LEXLOCAL_RETRIEVAL_TOP_K": value})
+
+
+@pytest.mark.parametrize("value", ["1", "20"])
+def test_load_settings_accepts_retrieval_top_k_bounds(value: str) -> None:
+    settings = load_settings({"LEXLOCAL_RETRIEVAL_TOP_K": value})
+
+    assert settings.retrieval_top_k == int(value)
+
+
+@pytest.mark.parametrize("value", ["invalid", "nan", "inf", "-1.01", "1.01", ""])
+def test_load_settings_rejects_invalid_retrieval_min_similarity(value: str) -> None:
+    with pytest.raises(ValueError, match="LEXLOCAL_RETRIEVAL_MIN_SIMILARITY"):
+        load_settings({"LEXLOCAL_RETRIEVAL_MIN_SIMILARITY": value})
+
+
+@pytest.mark.parametrize("value", ["-1", "0", "0.125", "1"])
+def test_load_settings_accepts_retrieval_min_similarity_bounds(value: str) -> None:
+    settings = load_settings({"LEXLOCAL_RETRIEVAL_MIN_SIMILARITY": value})
+
+    assert settings.retrieval_min_similarity == float(value)

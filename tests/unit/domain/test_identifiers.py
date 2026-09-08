@@ -12,6 +12,7 @@ from lexlocal.domain.identifiers import (
     IndexGenerationId,
     LocalModelId,
     ProcessingJobId,
+    QaRequestId,
     RetrievalRunId,
     SourceLocatorId,
     WorkspaceId,
@@ -27,6 +28,7 @@ IDENTIFIER_TYPES = (
     SourceLocatorId,
     ChunkId,
     LocalModelId,
+    QaRequestId,
     RetrievalRunId,
     EvidenceItemId,
 )

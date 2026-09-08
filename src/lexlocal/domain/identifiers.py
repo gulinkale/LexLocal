@@ -78,6 +78,10 @@ class LocalModelId(_UuidIdentifier):
     __slots__ = ()
 
 
+class QaRequestId(_UuidIdentifier):
+    __slots__ = ()
+
+
 class RetrievalRunId(_UuidIdentifier):
     __slots__ = ()
 
