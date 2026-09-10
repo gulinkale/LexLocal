@@ -8,6 +8,7 @@ from .indexing import IndexRepository
 from .ingestion import IngestionRepository
 from .local_models import ResolvedModelRepository
 from .processing import ProcessingRepository
+from .retrieval import RetrievalRepository
 from .workspaces import WorkspaceRepository
 
 
@@ -47,6 +48,12 @@ class UnitOfWork(Protocol):
     @property
     def embeddings(self) -> EmbeddingRepository:
         """Return the embedding repository bound to the active transaction."""
+
+        ...
+
+    @property
+    def retrieval(self) -> RetrievalRepository:
+        """Return the retrieval repository bound to the active transaction."""
 
         ...
 

@@ -18,6 +18,9 @@ from lexlocal.infrastructure.persistence.sqlite_index_repository import (
 from lexlocal.infrastructure.persistence.sqlite_processing_repository import (
     SQLiteProcessingRepository,
 )
+from lexlocal.infrastructure.persistence.sqlite_retrieval_repository import (
+    SQLiteRetrievalRepository,
+)
 from lexlocal.infrastructure.persistence.sqlite_unit_of_work import (
     SQLiteUnitOfWork as _SQLiteUnitOfWork,
 )
@@ -278,6 +281,42 @@ def test_configured_embedding_repository_is_bound_only_in_active_scope(
     with unit_of_work:
         assert isinstance(unit_of_work.embeddings, SQLiteEmbeddingRepository)
         assert unit_of_work.embeddings is not repository
+
+
+def test_retrieval_repository_fails_closed_until_it_is_configured(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = SQLiteUnitOfWork(SQLiteConnectionFactory(tmp_path / "lexlocal.db"))
+
+    with unit_of_work:
+        with pytest.raises(RuntimeError, match="retrieval repository is not configured"):
+            _ = unit_of_work.retrieval
+
+
+def test_configured_retrieval_repository_is_bound_only_in_active_scope(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = _SQLiteUnitOfWork(
+        SQLiteConnectionFactory(tmp_path / "lexlocal.db"),
+        InsecureDevelopmentOnlyWorkspaceNamePersistence(),
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+
+    with pytest.raises(RuntimeError, match="transaction is not active"):
+        _ = unit_of_work.retrieval
+
+    with unit_of_work:
+        repository = unit_of_work.retrieval
+        assert isinstance(repository, SQLiteRetrievalRepository)
+        assert repository._connection is unit_of_work.connection
+        unit_of_work.rollback()
+
+        with pytest.raises(RuntimeError, match="transaction is not active"):
+            _ = unit_of_work.retrieval
+
+    with unit_of_work:
+        assert isinstance(unit_of_work.retrieval, SQLiteRetrievalRepository)
+        assert unit_of_work.retrieval is not repository
 
 
 @pytest.mark.parametrize("operation", ["commit", "rollback"])

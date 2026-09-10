@@ -32,7 +32,7 @@ def test_real_migration_pipeline(
     assert migrations
     assert migrations[0].version == 1
     assert migrations[0].filename == "001_initial.sql"
-    assert migrations[-1].filename == "003_chunk_source_offsets.sql"
+    assert migrations[-1].filename == "004_retrieval_run_configuration.sql"
 
     first_connection = factory.create()
 
@@ -102,6 +102,158 @@ def test_chunk_offset_migration_adds_only_constrained_offset_columns(
     assert "CHECK (source_start_offset >= 0)" in sql
     assert "CHECK (source_end_offset > source_start_offset)" in sql
     assert run_migrations(connection, migrations) == ()
+    connection.close()
+
+
+def test_retrieval_configuration_migration_has_only_the_approved_shape(
+    tmp_path: Path,
+) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "retrieval.db")
+    connection = factory.create()
+    migrations = discover_migrations(default_migrations_dir())
+    run_migrations(connection, migrations)
+
+    run_columns = {
+        row["name"]: row
+        for row in connection.execute("PRAGMA table_info(retrieval_runs)").fetchall()
+    }
+    assert run_columns["min_similarity"]["notnull"] == 1
+    assert run_columns["min_similarity"]["dflt_value"] == "0.0"
+    relation_columns = tuple(
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(retrieval_run_generations)"
+        ).fetchall()
+    )
+    assert relation_columns == (
+        "retrieval_run_id",
+        "workspace_id",
+        "index_generation_id",
+    )
+    relation_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'retrieval_run_generations'"
+    ).fetchone()["sql"]
+    assert "PRIMARY KEY(retrieval_run_id, index_generation_id)" in relation_sql
+    assert "REFERENCES retrieval_runs(id, workspace_id)" in relation_sql
+    assert "REFERENCES index_generations(id, workspace_id)" in relation_sql
+    foreign_keys = connection.execute(
+        "PRAGMA foreign_key_list(retrieval_run_generations)"
+    ).fetchall()
+    assert {(row["table"], row["on_update"], row["on_delete"]) for row in foreign_keys} == {
+        ("retrieval_runs", "RESTRICT", "CASCADE"),
+        ("index_generations", "RESTRICT", "RESTRICT"),
+    }
+    indexes = connection.execute(
+        "PRAGMA index_list(retrieval_run_generations)"
+    ).fetchall()
+    assert len(indexes) == 1
+    assert indexes[0]["origin"] == "pk"
+    assert run_migrations(connection, migrations) == ()
+    connection.close()
+
+
+def test_retrieval_configuration_migration_upgrades_an_existing_run(
+    tmp_path: Path,
+) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "retrieval-forward.db")
+    connection = factory.create()
+    migrations = discover_migrations(default_migrations_dir())
+    run_migrations(connection, migrations[:3])
+    connection.executescript(
+        """
+        INSERT INTO workspaces
+          (id, name_ciphertext, name_lookup_fingerprint, state, created_at, updated_at)
+        VALUES ('w', x'01', x'02', 'ACTIVE', 't', 't');
+        INSERT INTO local_models
+          (id, purpose, provider, requested_alias, resolved_model_id,
+           dimensions, created_at)
+        VALUES ('m', 'EMBEDDING', 'synthetic', 'fixture', 'model', 2, 't');
+        INSERT INTO chats
+          (id, workspace_id, state, created_at, updated_at)
+        VALUES ('chat', 'w', 'ACTIVE', 't', 't');
+        INSERT INTO chat_messages
+          (id, workspace_id, chat_id, role, sequence_number,
+           content_ciphertext, created_at)
+        VALUES ('question', 'w', 'chat', 'USER', 1, x'01', 't');
+        INSERT INTO qa_requests
+          (id, workspace_id, chat_id, question_message_id, state, created_at)
+        VALUES ('qa', 'w', 'chat', 'question', 'SEARCHING', 't');
+        INSERT INTO retrieval_runs
+          (id, workspace_id, purpose, qa_request_id, query_ciphertext,
+           embedding_model_id, top_k, candidate_count,
+           retrieval_policy_version, created_at)
+        VALUES ('run', 'w', 'QA', 'qa', x'01', 'm', 5, 0, 'policy', 't');
+        """
+    )
+
+    applied = run_migrations(connection, migrations)
+
+    assert tuple(migration.version for migration in applied) == (4,)
+    row = connection.execute(
+        "SELECT min_similarity FROM retrieval_runs WHERE id = 'run'"
+    ).fetchone()
+    assert row["min_similarity"] == 0.0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM retrieval_run_generations"
+    ).fetchone()[0] == 0
+    connection.close()
+
+
+@pytest.mark.parametrize("threshold", [-1.000001, 1.000001])
+def test_retrieval_min_similarity_migration_enforces_inclusive_bounds(
+    tmp_path: Path,
+    threshold: float,
+) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "threshold.db")
+    connection = factory.create()
+    run_migrations(connection, discover_migrations(default_migrations_dir()))
+    connection.execute(
+        """
+        INSERT INTO workspaces
+          (id, name_ciphertext, name_lookup_fingerprint, state, created_at, updated_at)
+        VALUES ('w', x'01', x'02', 'ACTIVE', 't', 't')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO local_models
+          (id, purpose, provider, requested_alias, resolved_model_id, dimensions, created_at)
+        VALUES ('m', 'EMBEDDING', 'synthetic', 'fixture', 'model', 2, 't')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO chats
+          (id, workspace_id, state, created_at, updated_at)
+        VALUES ('chat', 'w', 'ACTIVE', 't', 't')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO chat_messages
+          (id, workspace_id, chat_id, role, sequence_number, content_ciphertext, created_at)
+        VALUES ('question', 'w', 'chat', 'USER', 1, x'01', 't')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO qa_requests
+          (id, workspace_id, chat_id, question_message_id, state, created_at)
+        VALUES ('qa', 'w', 'chat', 'question', 'SEARCHING', 't')
+        """
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """
+            INSERT INTO retrieval_runs
+              (id, workspace_id, purpose, qa_request_id, query_ciphertext,
+               embedding_model_id, top_k, candidate_count,
+               retrieval_policy_version, created_at, min_similarity)
+            VALUES ('run', 'w', 'QA', 'qa', x'01', 'm', 5, 1, 'p', 't', ?)
+            """,
+            (threshold,),
+        )
     connection.close()
 
 
