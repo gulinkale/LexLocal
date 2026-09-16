@@ -39,6 +39,7 @@ from lexlocal.domain.identifiers import (
     RetrievalRunId,
     WorkspaceId,
 )
+from lexlocal.domain.processing import ProcessingJobState
 from lexlocal.domain.retrieval import Evidence, EvidenceRank, SimilarityScore
 from lexlocal.infrastructure.persistence.migration_runner import run_migrations
 from lexlocal.infrastructure.persistence.migrations import (
@@ -470,6 +471,29 @@ def test_resolves_authoritative_full_and_narrowed_active_scope(
     )
     assert narrowed.generation_ids == (IndexGenerationId(_generation_id(2)),)
     assert narrowed.representative.document_display_name == "Anonymous document 2"
+    assert all(
+        item.coverage_state is ProcessingJobState.READY for item in full.generations
+    )
+
+
+def test_scope_reconstructs_exact_ready_and_warning_coverage(
+    database: sqlite3.Connection,
+) -> None:
+    repository = SQLiteRetrievalRepository(
+        database,
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+    database.execute(
+        "UPDATE document_processing_jobs SET state = 'READY_WITH_WARNINGS' WHERE id = ?",
+        ("70000000-0000-4000-8000-000000000002",),
+    )
+
+    scope = repository.resolve_scope(_request())
+
+    assert tuple(item.coverage_state for item in scope.generations) == (
+        ProcessingJobState.READY,
+        ProcessingJobState.READY_WITH_WARNINGS,
+    )
 
 
 def test_scope_rejects_unknown_narrowing_and_cross_workspace_owner(
@@ -540,6 +564,69 @@ def test_scope_fails_closed_for_invalid_generation_graphs(
 
     with pytest.raises(error_type):
         repository.resolve_scope(_request())
+
+
+@pytest.mark.parametrize(
+    ("statement", "requires_corruption_mode"),
+    [
+        (
+            "DELETE FROM document_processing_jobs "
+            "WHERE id = '70000000-0000-4000-8000-000000000001'",
+            True,
+        ),
+        (
+            "UPDATE document_processing_jobs "
+            "SET workspace_id = '10000000-0000-4000-8000-000000000002' "
+            "WHERE id = '70000000-0000-4000-8000-000000000001'",
+            True,
+        ),
+        (
+            "UPDATE index_generations "
+            "SET processing_job_id = '70000000-0000-4000-8000-000000000002' "
+            "WHERE id = '80000000-0000-4000-8000-000000000001'",
+            False,
+        ),
+        (
+            "UPDATE document_processing_jobs SET state = 'PROCESSING' "
+            "WHERE id = '70000000-0000-4000-8000-000000000001'",
+            False,
+        ),
+        (
+            "UPDATE document_processing_jobs SET stage = 'EXTRACTION' "
+            "WHERE id = '70000000-0000-4000-8000-000000000001'",
+            False,
+        ),
+    ],
+    ids=[
+        "missing-job",
+        "cross-workspace-job",
+        "cross-version-job",
+        "nonterminal-job",
+        "wrong-job-stage",
+    ],
+)
+def test_scope_rejects_invalid_coverage_relationship_before_handoff(
+    database: sqlite3.Connection,
+    statement: str,
+    requires_corruption_mode: bool,
+) -> None:
+    repository = SQLiteRetrievalRepository(
+        database,
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+    if requires_corruption_mode:
+        database.rollback()
+        database.execute("PRAGMA foreign_keys = OFF")
+        database.execute("BEGIN")
+    database.execute(statement)
+
+    with pytest.raises(RetrievalIntegrityError) as raised:
+        repository.resolve_scope(_request())
+
+    message = str(raised.value)
+    assert "70000000" not in message
+    assert "80000000" not in message
+    assert "10000000" not in message
 
 
 def test_load_candidates_decodes_exact_ordered_vectors_text_and_provenance(

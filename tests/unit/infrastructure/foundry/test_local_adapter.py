@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from lexlocal.application.ports.local_models import (
+    ChatInferenceProfile,
     EmbeddingProvider,
     LocalModelIncompatible,
     LocalModelInferenceError,
@@ -51,12 +52,17 @@ class FakeChatClient:
         self.chunks = chunks
         self.error = error
         self.messages: list[list[dict[str, str]]] = []
+        self.settings = SimpleNamespace(temperature=None, random_seed=None)
+        self.observed_settings: list[tuple[object, object]] = []
 
     def complete_streaming_chat(
         self,
         messages: list[dict[str, str]],
     ) -> Iterable[object]:
         self.messages.append(messages)
+        self.observed_settings.append(
+            (self.settings.temperature, self.settings.random_seed)
+        )
         if self.error is not None:
             raise self.error
         return self.chunks
@@ -370,6 +376,78 @@ def test_chat_inference_returns_sdk_free_text_and_reuses_loaded_handle() -> None
     assert model.load_calls == 2
     assert manager.catalog.requested_aliases == ["exact-chat"]
     runtime.close()
+    assert model.unload_calls == 2
+
+
+def test_chat_inference_preserves_ordinary_response_bytes() -> None:
+    client = FakeChatClient([chunk("  synthetic"), chunk(" answer\n")])
+    model = FakeModel(chat_client=client)
+    runtime, status = resolve_chat(model)
+
+    result = runtime.chat_provider(status).generate("anonymous prompt")
+
+    assert result == "  synthetic answer\n"
+    assert client.observed_settings[-1] == (None, None)
+
+
+def test_chat_inference_applies_and_restores_exact_call_profile() -> None:
+    client = FakeChatClient([chunk("synthetic answer")])
+    model = FakeModel(chat_client=client)
+    runtime, status = resolve_chat(model)
+    profile = ChatInferenceProfile(temperature=0.0, random_seed=0)
+
+    result = runtime.chat_provider(status).generate(
+        "anonymous prompt",
+        profile=profile,
+    )
+
+    assert result == "synthetic answer"
+    assert client.observed_settings[-1] == (0.0, 0)
+    assert client.settings.temperature is None
+    assert client.settings.random_seed is None
+
+
+def test_chat_inference_returns_only_content_after_one_reasoning_envelope() -> None:
+    client = FakeChatClient(
+        [
+            chunk("<thi"),
+            chunk("nk>anonymous synthetic reasoning"),
+            chunk("</think>\n\n"),
+            chunk('{"answer":"synthetic"}'),
+        ]
+    )
+    model = FakeModel(chat_client=client)
+    runtime, status = resolve_chat(model)
+
+    result = runtime.chat_provider(status).generate("anonymous prompt")
+
+    assert result == '\n\n{"answer":"synthetic"}'
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "<think>unterminated synthetic reasoning",
+        "<think>synthetic reasoning</think>   ",
+        "prefix<think>synthetic reasoning</think>final",
+        "<thinking>synthetic reasoning</thinking>final",
+        "<think>one</think><think>two</think>final",
+        "<think>synthetic reasoning</think>final</think>",
+    ],
+)
+def test_chat_inference_rejects_malformed_or_ambiguous_reasoning_envelope(
+    response: str,
+) -> None:
+    client = FakeChatClient([chunk(response)])
+    model = FakeModel(chat_client=client)
+    runtime, status = resolve_chat(model)
+
+    with pytest.raises(LocalModelInferenceError) as captured:
+        runtime.chat_provider(status).generate("anonymous prompt")
+
+    assert str(captured.value) == "local chat inference failed"
+    assert captured.value.__cause__ is None
+    assert response not in str(captured.value)
     assert model.unload_calls == 2
 
 

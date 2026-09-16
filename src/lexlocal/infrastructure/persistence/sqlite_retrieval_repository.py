@@ -46,7 +46,11 @@ from lexlocal.domain.identifiers import (
     SourceLocatorId,
     WorkspaceId,
 )
-from lexlocal.domain.processing import IndexGeneration, IndexGenerationState
+from lexlocal.domain.processing import (
+    IndexGeneration,
+    IndexGenerationState,
+    ProcessingJobState,
+)
 from lexlocal.domain.retrieval import (
     Evidence,
     EvidenceAvailability,
@@ -396,6 +400,7 @@ class SQLiteRetrievalRepository(RetrievalRepository):
             VersionNumber(scope_row["version_number"]),
             display_name,
             persisted,
+            ProcessingJobState(generation_row["job_state"]),
         )
 
     def _generation_candidates(

@@ -157,11 +157,24 @@ question, receive a grounded answer, and open the cited page and passage.
   - Add ranking, tie, empty-index, dimension mismatch, workspace isolation, version filtering, and repeatability tests.
   - Complete when relevant synthetic passages are returned with stable evidence IDs and source locators.
 
+
+- RAG-002: Calibrate evidence sufficiency outcomes
+  - Use the existing exact local chat model/runtime behind a dedicated Application-owned semantic-verifier boundary to assign one strict `SUPPORTS`, `RELATED_ONLY`, `CONTRADICTS`, or `IRRELEVANT` relation to every retrieved evidence item.
+  - Keep the final `SUFFICIENT`, `RELATED_BUT_INSUFFICIENT`, or `INSUFFICIENT` mapping deterministic and Application-owned; the model does not choose sufficiency and similarity/count/provenance cannot independently establish support.
+  - Expose the versioned decision, ordered validated relations, policy-approved related evidence, and safe aggregate diagnostics through an immutable Application contract that CHAT-001 consumes without recalculation.
+  - Reuse the process-owned Foundry runtime with no alternate/cloud fallback; permit at most one strict same-contract repair and treat invocation/parse/cancellation failures as operational failures.
+  - Add truth-table, structured-output, repair, warning/contradiction veto, empty retrieval, related-evidence ordering, false-confidence, privacy, and fixed anonymous offline-model qualification tests.
+  - Complete when insufficient support cannot be presented as certain, positive sufficiency requires validated semantic support, and CHAT-001 can persist the approved historical snapshot atomically.
+
+
+
 - CHAT-001: Generate one grounded answer and validated citation
-  - Orchestrate query embedding, retrieval, initial evidence sufficiency, context-only prompting, local generation, and citation validation.
-  - Reject fabricated document/page/evidence references and return an explicit insufficient-evidence result rather than general model knowledge.
-  - Commit a completed assistant answer, exact scope snapshot, evidence, and citations atomically; cancellation or failure must leave no completed answer.
-  - Add fake-model tests, temporary-database rollback tests, citation validation tests, and one offline local-model smoke path.
+  - Operate on an existing committed same-workspace QA request, user question, and immutable exact scope; do not create chat/QA/scope records.
+  - Reuse RAG-001 preparation/staging and consume RAG-002's versioned sufficiency result without duplicating query embedding, retrieval, or sufficiency logic.
+  - For sufficient evidence, use a versioned context-only prompt and strict structured local-model output whose `E{rank}` labels are validated against exact retrieval evidence.
+  - For either insufficient state, skip the model and persist the approved versioned Application-authored non-answer behavior.
+  - Atomically commit the staged/reused retrieval evidence, completed assistant outcome, validated citations, QA/chat updates, and safe activity event; cancellation or failure leaves no completed answer.
+  - Add fake-model, insufficiency, repair, temporary-database rollback, cancellation, retry, citation validation, security/isolation, and one opt-in offline local-model smoke test path.
   - Complete when one question produces either a grounded cited answer or an explicit non-answer.
 
 - UI-001: Deliver the M1 desktop RAG workflow
@@ -466,19 +479,12 @@ citations that continue to resolve to the exact historical document version.
   - Add follow-up resolution, context truncation, poisoned prior answer, restart, and scope-change tests.
   - Complete when follow-up questions remain coherent but answers are grounded only in documents.
 
-- RAG-002: Calibrate evidence sufficiency outcomes
-  - Implement `SUFFICIENT`, `RELATED_BUT_INSUFFICIENT`, and `INSUFFICIENT` behavior using documented configurable signals.
-  - Present caveated related evidence without a definitive answer when support is incomplete.
-  - Store decision inputs and safe diagnostic metadata for evaluation, not raw sensitive prompts in logs.
-  - Add threshold boundary, empty retrieval, conflicting weak evidence, and false-confidence regression tests.
-  - Complete when insufficient support cannot be presented as certain.
-
-- CHAT-005: Harden streaming, cancellation, retry, and atomic answer commit
+- CHAT-005: Harden streaming, in-flight cancellation, and concurrent retry around the existing atomic answer boundary
   - Keep partial streamed text ephemeral and never store it as a completed answer.
-  - Validate all citations before atomically committing the assistant message, request outcome, evidence, and citations.
-  - Preserve the failed/cancelled request for safe retry without duplicating messages or evidence.
-  - Add stream interruption, cancellation race, invalid citation, database failure, retry, and model-unavailable tests.
-  - Complete when only fully validated answers appear as completed history.
+  - Preserve CHAT-001's citation-before-commit and atomic completed-answer invariants while adding provider interruption and race hardening.
+  - Harden concurrent retry, crash recovery, and cancellation races without creating duplicate messages, evidence, or citations.
+  - Add stream interruption, in-flight cancellation, concurrent retry, crash-recovery, and model-unavailable tests.
+  - Complete when advanced interruption and concurrency cannot expose or persist partial output or weaken the existing atomic boundary.
 
 - HISTORY-001: Resolve historical and deleted-source citations honestly
   - Resolve citations by immutable version/source locator rather than current display name or active pointer.

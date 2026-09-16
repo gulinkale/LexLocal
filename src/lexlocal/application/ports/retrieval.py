@@ -21,7 +21,7 @@ from lexlocal.domain.identifiers import (
     RetrievalRunId,
     WorkspaceId,
 )
-from lexlocal.domain.processing import IndexGenerationState
+from lexlocal.domain.processing import IndexGenerationState, ProcessingJobState
 from lexlocal.domain.retrieval import (
     Evidence,
     EvidenceAvailability,
@@ -111,6 +111,7 @@ class ResolvedRetrievalGeneration:
     version_number: VersionNumber
     document_display_name: str = field(repr=False)
     persisted: PersistedIndexGeneration
+    coverage_state: ProcessingJobState
 
     def __post_init__(self) -> None:
         if (
@@ -122,6 +123,15 @@ class ResolvedRetrievalGeneration:
             or self.persisted.generation.state is not IndexGenerationState.ACTIVE
         ):
             raise NoEligibleIndex("resolved retrieval generation is not eligible")
+        if not isinstance(
+            self.coverage_state, ProcessingJobState
+        ) or self.coverage_state not in (
+            ProcessingJobState.READY,
+            ProcessingJobState.READY_WITH_WARNINGS,
+        ):
+            raise RetrievalIntegrityError(
+                "resolved retrieval generation coverage is invalid"
+            )
 
     @property
     def workspace_id(self) -> WorkspaceId:

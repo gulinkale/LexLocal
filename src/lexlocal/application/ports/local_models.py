@@ -1,5 +1,6 @@
 """Define SDK-free Application contracts for local model capabilities."""
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -109,6 +110,20 @@ class LocalModelStatus:
             raise LocalModelRuntimeError("execution provider must be non-empty")
 
 
+@dataclass(frozen=True, slots=True)
+class ChatInferenceProfile:
+    """Carry the two approved SDK-free chat invocation controls."""
+
+    temperature: float
+    random_seed: int
+
+    def __post_init__(self) -> None:
+        if type(self.temperature) is not float or not math.isfinite(self.temperature):
+            raise LocalModelRuntimeError("chat inference temperature is invalid")
+        if type(self.random_seed) is not int:
+            raise LocalModelRuntimeError("chat inference random seed is invalid")
+
+
 class LocalModelRuntime(Protocol):
     """Resolve one cached model and publish status only after compatibility health."""
 
@@ -138,7 +153,12 @@ class ChatInferenceProvider(Protocol):
 
         ...
 
-    def generate(self, prompt: str) -> str:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        profile: ChatInferenceProfile | None = None,
+    ) -> str:
         """Return generated text through the configured exact local model."""
 
         ...

@@ -51,7 +51,11 @@ from lexlocal.domain.identifiers import (
     SourceLocatorId,
     WorkspaceId,
 )
-from lexlocal.domain.processing import IndexGeneration, IndexGenerationState
+from lexlocal.domain.processing import (
+    IndexGeneration,
+    IndexGenerationState,
+    ProcessingJobState,
+)
 from lexlocal.domain.retrieval import (
     Evidence,
     EvidenceRank,
@@ -75,6 +79,7 @@ def _resolved(
     workspace_id: WorkspaceId = WORKSPACE_ID,
     model_id: LocalModelId = MODEL_ID,
     profile: str = "chunk-v1",
+    coverage_state: ProcessingJobState = ProcessingJobState.READY,
 ) -> ResolvedRetrievalGeneration:
     generation = IndexGeneration(
         IndexGenerationId(f"50000000-0000-4000-8000-{number:012d}"),
@@ -92,6 +97,7 @@ def _resolved(
         VersionNumber(number),
         f"Synthetic document {number}",
         PersistedIndexGeneration(generation, NOW, activated_at=NOW),
+        coverage_state,
     )
 
 
@@ -220,6 +226,35 @@ def test_scope_canonicalizes_representative_and_requires_one_exact_cohort() -> N
 
     with pytest.raises(IncompatibleRetrievalScope, match="generations are incompatible"):
         _scope(first, _resolved(2, profile="other-profile"))
+
+
+@pytest.mark.parametrize(
+    "coverage_state",
+    [ProcessingJobState.READY, ProcessingJobState.READY_WITH_WARNINGS],
+)
+def test_resolved_generation_exposes_exact_terminal_coverage(
+    coverage_state: ProcessingJobState,
+) -> None:
+    resolved = _resolved(coverage_state=coverage_state)
+
+    assert resolved.coverage_state is coverage_state
+
+
+@pytest.mark.parametrize(
+    "coverage_state",
+    [
+        ProcessingJobState.QUEUED,
+        ProcessingJobState.PROCESSING,
+        ProcessingJobState.FAILED,
+        ProcessingJobState.CANCELLED,
+        "READY",
+    ],
+)
+def test_resolved_generation_rejects_nonterminal_or_untyped_coverage(
+    coverage_state: object,
+) -> None:
+    with pytest.raises(RetrievalIntegrityError, match="coverage is invalid"):
+        _resolved(coverage_state=coverage_state)  # type: ignore[arg-type]
 
 
 def test_scope_rejects_missing_cross_workspace_and_non_narrowing_results() -> None:
