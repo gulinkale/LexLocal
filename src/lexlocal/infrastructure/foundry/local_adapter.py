@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from lexlocal.application.ports.local_models import (
+    ChatInferenceProfile,
     ChatInferenceProvider,
     EmbeddingProvider,
     LocalModelIncompatible,
@@ -24,6 +25,8 @@ from lexlocal.domain.identifiers import LocalModelId
 DEFAULT_VALIDATION_MODEL_ALIAS = "qwen2.5-0.5b"
 _CHAT_HEALTH_PROMPT = "Reply with one synthetic readiness word."
 _EMBEDDING_HEALTH_TEXT = "anonymous synthetic readiness fixture"
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
 
 DiagnosticOutput = Callable[[str], None]
 
@@ -243,13 +246,16 @@ class FoundryLocalRuntime:
             raise LocalModelRuntimeError("local model cleanup failed") from None
         return dimensions
 
-    def _chat(self, model_id: LocalModelId, prompt: str) -> str:
+    def _chat(
+        self,
+        model_id: LocalModelId,
+        prompt: str,
+        profile: ChatInferenceProfile | None,
+    ) -> str:
         handle = self._load_exact(model_id, ModelCapability.CHAT)
         try:
             client = handle.model.get_chat_client()
-            return _collect_meaningful_content(
-                client.complete_streaming_chat([{"role": "user", "content": prompt}])
-            )
+            return _complete_chat(client, prompt, profile)
         except Exception:
             self._cleanup_after_failure(handle)
             raise LocalModelInferenceError("local chat inference failed") from None
@@ -324,10 +330,15 @@ class FoundryLocalChatProvider:
     _runtime: FoundryLocalRuntime
     status: LocalModelStatus
 
-    def generate(self, prompt: str) -> str:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        profile: ChatInferenceProfile | None = None,
+    ) -> str:
         """Generate meaningful text without exposing native response objects."""
 
-        return self._runtime._chat(self.status.model.id, prompt)
+        return self._runtime._chat(self.status.model.id, prompt, profile)
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,6 +408,60 @@ def _collect_meaningful_content(chunks: Iterable[object]) -> str:
     if not content.strip():
         raise LocalModelIncompatible("local chat result is incompatible")
     return content
+
+
+def _complete_chat(
+    client: Any,
+    prompt: str,
+    profile: ChatInferenceProfile | None,
+) -> str:
+    """Apply one call-scoped profile without changing ordinary chat behavior."""
+
+    if profile is None:
+        return _final_chat_content(
+            _collect_meaningful_content(
+                client.complete_streaming_chat(
+                    [{"role": "user", "content": prompt}]
+                )
+            )
+        )
+
+    settings = client.settings
+    original_temperature = settings.temperature
+    original_random_seed = settings.random_seed
+    try:
+        settings.temperature = profile.temperature
+        settings.random_seed = profile.random_seed
+        return _final_chat_content(
+            _collect_meaningful_content(
+                client.complete_streaming_chat(
+                    [{"role": "user", "content": prompt}]
+                )
+            )
+        )
+    finally:
+        settings.temperature = original_temperature
+        settings.random_seed = original_random_seed
+
+
+def _final_chat_content(content: str) -> str:
+    """Remove one exact leading reasoning envelope or preserve ordinary text."""
+
+    has_think_markup = "<think" in content or "</think" in content
+    if not has_think_markup:
+        return content
+    if not content.startswith(_THINK_OPEN):
+        raise LocalModelIncompatible("local chat result is incompatible")
+    if content.count("<think") != 1 or content.count("</think") != 1:
+        raise LocalModelIncompatible("local chat result is incompatible")
+
+    close_at = content.find(_THINK_CLOSE, len(_THINK_OPEN))
+    if close_at < 0:
+        raise LocalModelIncompatible("local chat result is incompatible")
+    final_content = content[close_at + len(_THINK_CLOSE) :]
+    if not final_content.strip():
+        raise LocalModelIncompatible("local chat result is incompatible")
+    return final_content
 
 
 def _extract_vectors(response: object, *, expected_count: int) -> list[list[float]]:

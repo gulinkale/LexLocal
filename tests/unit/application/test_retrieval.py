@@ -47,7 +47,11 @@ from lexlocal.domain.identifiers import (
     SourceLocatorId,
     WorkspaceId,
 )
-from lexlocal.domain.processing import IndexGeneration, IndexGenerationState
+from lexlocal.domain.processing import (
+    IndexGeneration,
+    IndexGenerationState,
+    ProcessingJobState,
+)
 from lexlocal.domain.retrieval import (
     PageNumber,
     SimilarityScore,
@@ -86,6 +90,7 @@ def _resolved(
         VersionNumber(version),
         f"Anonymous document {document}",
         PersistedIndexGeneration(index, NOW, activated_at=activated_at),
+        ProcessingJobState.READY,
     )
 
 
@@ -689,6 +694,7 @@ def test_incompatible_generation_cohort_fails_before_query_inference() -> None:
         VersionNumber(2),
         "Anonymous document 2",
         PersistedIndexGeneration(incompatible_index, NOW, activated_at=NOW),
+        ProcessingJobState.READY,
     )
     repository = _RetrievalRepositoryDouble((second, first), ())
     prepare, embed_query, _, _ = _prepare(repository)

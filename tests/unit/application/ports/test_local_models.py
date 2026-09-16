@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from lexlocal.application.ports.local_models import (
+    ChatInferenceProfile,
     ChatInferenceProvider,
     EmbeddingProvider,
     LocalModelError,
@@ -125,6 +126,41 @@ def test_runtime_status_keeps_runtime_only_metadata_outside_record() -> None:
         "execution_provider",
     )
     assert status.model == make_record()
+
+
+def test_chat_inference_profile_preserves_only_exact_call_controls() -> None:
+    profile = ChatInferenceProfile(temperature=0.0, random_seed=0)
+
+    assert tuple(field.name for field in fields(ChatInferenceProfile)) == (
+        "temperature",
+        "random_seed",
+    )
+    assert profile.temperature == 0.0
+    assert profile.random_seed == 0
+    with pytest.raises(FrozenInstanceError):
+        profile.random_seed = 1  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("temperature", "random_seed"),
+    [
+        (True, 0),
+        (0, 0),
+        (float("nan"), 0),
+        (float("inf"), 0),
+        (0.0, True),
+        (0.0, 1.5),
+    ],
+)
+def test_chat_inference_profile_rejects_invalid_controls(
+    temperature: object,
+    random_seed: object,
+) -> None:
+    with pytest.raises(LocalModelRuntimeError):
+        ChatInferenceProfile(
+            temperature=temperature,  # type: ignore[arg-type]
+            random_seed=random_seed,  # type: ignore[arg-type]
+        )
 
 
 def test_local_model_errors_share_one_sanitized_application_base() -> None:
