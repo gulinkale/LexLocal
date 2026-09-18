@@ -4,7 +4,11 @@ import pytest
 
 from lexlocal.domain.errors import InvalidDomainValue
 from lexlocal.domain.identifiers import (
+    ActivityEventId,
+    ChatId,
+    ChatMessageId,
     ChunkId,
+    CitationId,
     DocumentId,
     DocumentPageId,
     DocumentVersionId,
@@ -31,6 +35,10 @@ IDENTIFIER_TYPES = (
     QaRequestId,
     RetrievalRunId,
     EvidenceItemId,
+    ChatId,
+    ChatMessageId,
+    CitationId,
+    ActivityEventId,
 )
 IDENTIFIER_TYPE_IDS = tuple(identifier_type.__name__ for identifier_type in IDENTIFIER_TYPES)
 

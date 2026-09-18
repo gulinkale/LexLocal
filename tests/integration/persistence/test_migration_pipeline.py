@@ -32,7 +32,7 @@ def test_real_migration_pipeline(
     assert migrations
     assert migrations[0].version == 1
     assert migrations[0].filename == "001_initial.sql"
-    assert migrations[-1].filename == "004_retrieval_run_configuration.sql"
+    assert migrations[-1].filename == "005_qa_verifier_snapshots.sql"
 
     first_connection = factory.create()
 
@@ -152,6 +152,74 @@ def test_retrieval_configuration_migration_has_only_the_approved_shape(
     connection.close()
 
 
+def test_chat_verifier_snapshot_migration_has_only_the_approved_shape(
+    tmp_path: Path,
+) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "chat-snapshot.db")
+    connection = factory.create()
+    migrations = discover_migrations(default_migrations_dir())
+    run_migrations(connection, migrations)
+
+    assert tuple(
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(qa_verifier_snapshots)"
+        ).fetchall()
+    ) == (
+        "qa_request_id",
+        "workspace_id",
+        "retrieval_run_id",
+        "evidence_policy_version",
+        "aggregate_coverage",
+        "supports_count",
+        "related_only_count",
+        "contradicts_count",
+        "irrelevant_count",
+        "repair_used",
+    )
+    assert tuple(
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(qa_verifier_snapshot_relations)"
+        ).fetchall()
+    ) == (
+        "qa_request_id",
+        "workspace_id",
+        "retrieval_run_id",
+        "evidence_item_id",
+        "relation",
+    )
+    tables = {
+        row["name"]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    assert {"qa_verifier_snapshots", "qa_verifier_snapshot_relations"} <= tables
+    assert run_migrations(connection, migrations) == ()
+    connection.close()
+
+
+def test_chat_verifier_snapshot_migration_preserves_authoritative_evidence_rank(
+    tmp_path: Path,
+) -> None:
+    factory = SQLiteConnectionFactory(tmp_path / "chat-snapshot-rank.db")
+    connection = factory.create()
+    run_migrations(connection, discover_migrations(default_migrations_dir()))
+
+    relation_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(qa_verifier_snapshot_relations)"
+        ).fetchall()
+    }
+    assert "rank" not in relation_columns
+    assert "evidence_code" not in relation_columns
+    assert "prompt" not in relation_columns
+    assert "raw_output" not in relation_columns
+    connection.close()
+
+
 def test_retrieval_configuration_migration_upgrades_an_existing_run(
     tmp_path: Path,
 ) -> None:
@@ -188,7 +256,7 @@ def test_retrieval_configuration_migration_upgrades_an_existing_run(
 
     applied = run_migrations(connection, migrations)
 
-    assert tuple(migration.version for migration in applied) == (4,)
+    assert tuple(migration.version for migration in applied) == (4, 5)
     row = connection.execute(
         "SELECT min_similarity FROM retrieval_runs WHERE id = 'run'"
     ).fetchone()

@@ -88,3 +88,19 @@ class RetrievalRunId(_UuidIdentifier):
 
 class EvidenceItemId(_UuidIdentifier):
     __slots__ = ()
+
+
+class ChatId(_UuidIdentifier):
+    __slots__ = ()
+
+
+class ChatMessageId(_UuidIdentifier):
+    __slots__ = ()
+
+
+class CitationId(_UuidIdentifier):
+    __slots__ = ()
+
+
+class ActivityEventId(_UuidIdentifier):
+    __slots__ = ()
