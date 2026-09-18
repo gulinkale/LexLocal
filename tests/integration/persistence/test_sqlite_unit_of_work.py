@@ -6,6 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from lexlocal.infrastructure.persistence.sqlite_chat_repository import (
+    SQLiteChatRepository,
+)
 from lexlocal.infrastructure.persistence.sqlite_connection import (
     SQLiteConnectionFactory,
 )
@@ -317,6 +320,42 @@ def test_configured_retrieval_repository_is_bound_only_in_active_scope(
     with unit_of_work:
         assert isinstance(unit_of_work.retrieval, SQLiteRetrievalRepository)
         assert unit_of_work.retrieval is not repository
+
+
+def test_chat_repository_fails_closed_until_it_is_configured(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = SQLiteUnitOfWork(SQLiteConnectionFactory(tmp_path / "lexlocal.db"))
+
+    with unit_of_work:
+        with pytest.raises(RuntimeError, match="CHAT repository is not configured"):
+            _ = unit_of_work.chat
+
+
+def test_configured_chat_repository_is_bound_only_in_active_scope(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = _SQLiteUnitOfWork(
+        SQLiteConnectionFactory(tmp_path / "lexlocal.db"),
+        InsecureDevelopmentOnlyWorkspaceNamePersistence(),
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+
+    with pytest.raises(RuntimeError, match="transaction is not active"):
+        _ = unit_of_work.chat
+
+    with unit_of_work:
+        repository = unit_of_work.chat
+        assert isinstance(repository, SQLiteChatRepository)
+        assert repository._connection is unit_of_work.connection
+        unit_of_work.rollback()
+
+        with pytest.raises(RuntimeError, match="transaction is not active"):
+            _ = unit_of_work.chat
+
+    with unit_of_work:
+        assert isinstance(unit_of_work.chat, SQLiteChatRepository)
+        assert unit_of_work.chat is not repository
 
 
 @pytest.mark.parametrize("operation", ["commit", "rollback"])

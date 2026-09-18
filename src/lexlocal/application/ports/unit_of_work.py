@@ -3,6 +3,7 @@
 from types import TracebackType
 from typing import Protocol, Self
 
+from .chat import ChatRepository
 from .embeddings import EmbeddingRepository
 from .indexing import IndexRepository
 from .ingestion import IngestionRepository
@@ -54,6 +55,12 @@ class UnitOfWork(Protocol):
     @property
     def retrieval(self) -> RetrievalRepository:
         """Return the retrieval repository bound to the active transaction."""
+
+        ...
+
+    @property
+    def chat(self) -> ChatRepository:
+        """Return the CHAT repository bound to the active transaction."""
 
         ...
 
