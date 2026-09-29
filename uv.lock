@@ -137,19 +137,19 @@ wheels = [
 
 [[package]]
 name = "foundry-local-core"
-version = "1.2.3"
+version = "1.2.4"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/d8/11abc75fecb9ad67049a272da39072c46956771a08df361757bfc541f39d/foundry_local_core-1.2.3-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7a2a31f150b3296f2e6217cca022db044b04a1bd8cc798819ff84034e457a8cc", size = 18289685, upload-time = "2026-06-12T23:30:28.344Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/21/27a1bd73efda0137a4a4d5a8085c59f48ddb60339b8b3347526153053757/foundry_local_core-1.2.3-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:51e28f341e886b28f0102a63da483e2fcb6d595078c494b3e7161d1ee453a485", size = 28083440, upload-time = "2026-06-12T23:30:31.656Z" },
-    { url = "https://files.pythonhosted.org/packages/50/d9/0f0ac54ef67b09324e2a97a2384355b182a6b52d541220c7625eb0405d29/foundry_local_core-1.2.3-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:5bd8c42909dfe25d03801bb5d971c206d489df37c14871069de16c2dbee8d9f0", size = 25965215, upload-time = "2026-06-12T23:30:34.925Z" },
-    { url = "https://files.pythonhosted.org/packages/f0/e8/857913a1c3eb1991287bb95f6add8d33f5a6f5d319915f9fd238618d8900/foundry_local_core-1.2.3-py3-none-win_amd64.whl", hash = "sha256:4f0321cf09f571bbf6ecc21c18914afe5771a56104300acaf4f39a452c02d6f3", size = 10062237, upload-time = "2026-06-12T23:30:37.348Z" },
-    { url = "https://files.pythonhosted.org/packages/69/67/5ee6c9fd0ded2244735b482704f8b4f60e327158e07b96d0ab42df3bc5ed/foundry_local_core-1.2.3-py3-none-win_arm64.whl", hash = "sha256:38ba1a4336d59a14130f6ac3e961dddaf204fb399cd3151376e3a65e99b0c85a", size = 9735331, upload-time = "2026-06-12T23:30:39.604Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/e0/c36cdac6338193a211b9aa18225511c09d5dfe29844b0c5788e72740ad88/foundry_local_core-1.2.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:5495358e737e5fdf4f2dd483e7133a219274176c322e6b7eb053afb85e2cb979", size = 18289152, upload-time = "2026-07-30T05:57:44.895Z" },
+    { url = "https://files.pythonhosted.org/packages/82/19/0c5c207f85cfae63ce2f57b71b15a1293d1025afa11494484b1cf496767a/foundry_local_core-1.2.4-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:d892f558cab6ea752ef3080d62791bd41d52ddf16ef35dc05e35b49be54f59e9", size = 28081939, upload-time = "2026-07-30T05:57:47.9Z" },
+    { url = "https://files.pythonhosted.org/packages/53/54/292c0360b1347abb43e1bb4feb281fc335aff3ad1bf6a2fbd9617c6e0497/foundry_local_core-1.2.4-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:1f643f646a9153de516e14cc5a9421bf1117ac7f59c88f65a72d5aab4e6af77a", size = 25964676, upload-time = "2026-07-30T05:57:50.897Z" },
+    { url = "https://files.pythonhosted.org/packages/95/60/3bc56f89d09b95d752d98a436d30ee7d9cd1baacdcd539a9f6323933e468/foundry_local_core-1.2.4-py3-none-win_amd64.whl", hash = "sha256:d523dc6445479baaf14f091b73da8d915acdda1d914451bf0cfa752df7198cc6", size = 10061799, upload-time = "2026-07-30T05:57:53.101Z" },
+    { url = "https://files.pythonhosted.org/packages/85/94/0bd322aa8d235e97a4c0dfdff85ad5a798486b8dfc6740a93167f42ec6ee/foundry_local_core-1.2.4-py3-none-win_arm64.whl", hash = "sha256:50f7684845b6917a6dab7006aca5f59438a2b030c3f0df1255b28d5d508dd020", size = 9732890, upload-time = "2026-07-30T05:57:55.145Z" },
 ]
 
 [[package]]
 name = "foundry-local-sdk"
-version = "1.2.3"
+version = "1.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foundry-local-core" },
@@ -164,7 +164,7 @@ dependencies = [
     { name = "requests" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/de/39fb4fa8421620b1b019f44eda37cfd0d82dc8c77c8bb43d0069d62ae3ad/foundry_local_sdk-1.2.3-py3-none-any.whl", hash = "sha256:73b20c128d6ec3784526d827e1eedbf40f0829320df2ad217dab14fbedddc037", size = 48584, upload-time = "2026-06-12T23:29:16.413Z" },
+    { url = "https://files.pythonhosted.org/packages/68/5a/f11442fee02e43ba0a8e40c82c59419a9f7f70e2f3e951bfc1191a6a4217/foundry_local_sdk-1.2.4-py3-none-any.whl", hash = "sha256:e9233abe274ca7eaf123414e64236108415df05346a0768f6d6d30e65cffe983", size = 48584, upload-time = "2026-07-30T05:55:42.983Z" },
 ]
 
 [[package]]
@@ -267,7 +267,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foundry-local-sdk", specifier = ">=1.2.3" },
+    { name = "foundry-local-sdk", specifier = ">=1.2.4,<2" },
     { name = "pyside6", specifier = ">=6.11.1" },
 ]
 
