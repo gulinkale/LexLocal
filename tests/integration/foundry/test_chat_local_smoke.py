@@ -167,7 +167,10 @@ def test_cached_configured_chat_model_returns_valid_grounded_contract() -> None:
     """Use only the configured cached model and the normal strict CHAT contract."""
 
     settings = load_settings()
-    runtime = FoundryLocalRuntime.initialize(app_name="lexlocal-chat001-smoke")
+    runtime = FoundryLocalRuntime.initialize(
+        app_name="lexlocal-chat001-smoke",
+        model_cache_dir=settings.foundry_model_cache_dir,
+    )
     try:
         status = runtime.resolve_ready(
             model_id=LocalModelId(str(uuid4())),

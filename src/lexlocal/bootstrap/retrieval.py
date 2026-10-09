@@ -10,7 +10,7 @@ from lexlocal.application.ports.unit_of_work import UnitOfWork
 from lexlocal.application.retrieval import PrepareRetrieval, StageRetrieval
 from lexlocal.application.workspaces import ActiveWorkspaceScope
 from lexlocal.bootstrap.embeddings import EmbeddingApplicationComposition
-from lexlocal.bootstrap.security import create_security_providers
+from lexlocal.bootstrap.security import SecurityProviders, create_security_providers
 from lexlocal.bootstrap.settings import AppSettings
 from lexlocal.domain.identifiers import EvidenceItemId, RetrievalRunId
 from lexlocal.domain.retrieval import SimilarityScore
@@ -40,10 +40,11 @@ def compose_retrieval_application(
     retrieval_run_id_factory: Callable[[], RetrievalRunId] | None = None,
     evidence_item_id_factory: Callable[[], EvidenceItemId] | None = None,
     clock: Callable[[], datetime] | None = None,
+    security_providers: SecurityProviders | None = None,
 ) -> RetrievalApplicationComposition:
     """Wire existing embedding, retrieval, security, and SQLite boundaries."""
 
-    security = create_security_providers(settings)
+    security = security_providers or create_security_providers(settings)
     configuration = RetrievalConfiguration(
         settings.retrieval_top_k,
         SimilarityScore(settings.retrieval_min_similarity),

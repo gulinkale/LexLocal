@@ -11,6 +11,7 @@ from lexlocal.application.ports.chat import (
     ChatActivityType,
     ChatFailureCode,
     ChatFailureUpdate,
+    ChatIntakeRegistration,
     ChatPersistenceError,
     QaRequestState,
 )
@@ -22,9 +23,15 @@ from lexlocal.domain.identifiers import (
     ActivityEventId,
     ChatId,
     ChatMessageId,
+    DocumentId,
+    DocumentVersionId,
+    IndexGenerationId,
+    LocalModelId,
+    ProcessingJobId,
     QaRequestId,
     WorkspaceId,
 )
+from lexlocal.domain.processing import IndexGeneration, IndexGenerationState
 from lexlocal.infrastructure.persistence.migration_runner import run_migrations
 from lexlocal.infrastructure.persistence.migrations import (
     default_migrations_dir,
@@ -44,6 +51,14 @@ WORKSPACE_ID = WorkspaceId("10000000-0000-4000-8000-000000000011")
 CHAT_ID = ChatId("11000000-0000-4000-8000-000000000011")
 QUESTION_ID = ChatMessageId("12000000-0000-4000-8000-000000000011")
 QA_REQUEST_ID = QaRequestId("20000000-0000-4000-8000-000000000011")
+INTAKE_CHAT_ID = ChatId("11000000-0000-4000-8000-000000000012")
+INTAKE_QUESTION_ID = ChatMessageId("12000000-0000-4000-8000-000000000012")
+INTAKE_QA_REQUEST_ID = QaRequestId("20000000-0000-4000-8000-000000000012")
+DOCUMENT_ID = DocumentId("50000000-0000-4000-8000-000000000011")
+VERSION_ID = DocumentVersionId("60000000-0000-4000-8000-000000000011")
+JOB_ID = ProcessingJobId("70000000-0000-4000-8000-000000000011")
+GENERATION_ID = IndexGenerationId("80000000-0000-4000-8000-000000000011")
+MODEL_ID = LocalModelId("30000000-0000-4000-8000-000000000011")
 
 
 def _database(tmp_path: Path) -> tuple[SQLiteConnectionFactory, SQLiteChatRepository]:
@@ -88,6 +103,24 @@ def _database(tmp_path: Path) -> tuple[SQLiteConnectionFactory, SQLiteChatReposi
         VALUES ('60000000-0000-4000-8000-000000000011', '{WORKSPACE_ID}',
                 '50000000-0000-4000-8000-000000000011', 1, x'04',
                 'ACTIVE', '{TIMESTAMP}');
+        INSERT INTO local_models
+          (id, purpose, provider, requested_alias, resolved_model_id,
+           model_version, dimensions, created_at)
+        VALUES ('{MODEL_ID}', 'EMBEDDING', 'synthetic', 'synthetic-embedding',
+                'synthetic-embedding-id', '1', 2, '{TIMESTAMP}');
+        INSERT INTO document_processing_jobs
+          (id, workspace_id, document_version_id, attempt_number,
+           state, stage, created_at, completed_at)
+        VALUES ('{JOB_ID}', '{WORKSPACE_ID}', '{VERSION_ID}', 1,
+                'READY', 'CHUNKING', '{TIMESTAMP}', '{TIMESTAMP}');
+        INSERT INTO index_generations
+          (id, workspace_id, document_version_id, processing_job_id, state,
+           embedding_model_id, chunking_profile_version,
+           normalization_profile_version, embedding_dimensions,
+           vector_dtype, chunk_count, created_at, activated_at)
+        VALUES ('{GENERATION_ID}', '{WORKSPACE_ID}', '{VERSION_ID}', '{JOB_ID}',
+                'ACTIVE', '{MODEL_ID}', 'chunk-v1', 'normalize-v1', 2,
+                'float32', 0, '{TIMESTAMP}', '{TIMESTAMP}');
         INSERT INTO qa_scope_versions
           (qa_request_id, workspace_id, document_id, document_version_id, included_at)
         VALUES ('{QA_REQUEST_ID}', '{WORKSPACE_ID}',
@@ -114,6 +147,30 @@ def _failure_update(repository: SQLiteChatRepository) -> ChatFailureUpdate:
             ChatActivityResult.FAILED,
             NOW,
         ),
+    )
+
+
+def _intake() -> ChatIntakeRegistration:
+    return ChatIntakeRegistration(
+        WORKSPACE_ID,
+        INTAKE_CHAT_ID,
+        INTAKE_QUESTION_ID,
+        INTAKE_QA_REQUEST_ID,
+        DOCUMENT_ID,
+        VERSION_ID,
+        IndexGeneration(
+            GENERATION_ID,
+            WORKSPACE_ID,
+            VERSION_ID,
+            JOB_ID,
+            MODEL_ID,
+            "chunk-v1",
+            "normalize-v1",
+            2,
+            IndexGenerationState.ACTIVE,
+        ),
+        " Exact synthetic intake question ",
+        NOW,
     )
 
 
@@ -156,4 +213,34 @@ def test_separate_failure_update_obeys_caller_commit_and_rollback(
     ).fetchone()
     assert tuple(row) == ("FAILED", "GENERATION_FAILED", None)
     assert verification.execute("SELECT COUNT(*) FROM activity_events").fetchone()[0] == 1
+    verification.close()
+
+
+def test_intake_graph_obeys_caller_commit_and_rollback(tmp_path: Path) -> None:
+    factory, repository = _database(tmp_path)
+    connection = repository._connection
+
+    connection.execute("BEGIN")
+    assert repository.add_intake(_intake()) is False
+    assert connection.in_transaction is True
+    connection.rollback()
+    assert connection.execute(
+        "SELECT COUNT(*) FROM qa_requests WHERE id = ?",
+        (str(INTAKE_QA_REQUEST_ID),),
+    ).fetchone()[0] == 0
+
+    connection.execute("BEGIN")
+    assert repository.add_intake(_intake()) is False
+    connection.commit()
+    connection.close()
+
+    verification = factory.create()
+    assert verification.execute(
+        "SELECT COUNT(*) FROM chats WHERE id = ?",
+        (str(INTAKE_CHAT_ID),),
+    ).fetchone()[0] == 1
+    assert verification.execute(
+        "SELECT COUNT(*) FROM qa_requests WHERE id = ?",
+        (str(INTAKE_QA_REQUEST_ID),),
+    ).fetchone()[0] == 1
     verification.close()

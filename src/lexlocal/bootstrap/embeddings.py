@@ -10,7 +10,7 @@ from lexlocal.application.ports.embeddings import EmbeddingCancellationCheck
 from lexlocal.application.ports.unit_of_work import UnitOfWork
 from lexlocal.application.workspaces import ActiveWorkspaceScope
 from lexlocal.bootstrap.foundry import LocalModelComposition
-from lexlocal.bootstrap.security import create_security_providers
+from lexlocal.bootstrap.security import SecurityProviders, create_security_providers
 from lexlocal.bootstrap.settings import AppSettings
 from lexlocal.infrastructure.persistence.sqlite_connection import SQLiteConnectionFactory
 from lexlocal.infrastructure.persistence.sqlite_unit_of_work import SQLiteUnitOfWork
@@ -40,10 +40,11 @@ def compose_embedding_application(
     *,
     cancellation: EmbeddingCancellationCheck | None = None,
     clock: Callable[[], datetime] | None = None,
+    security_providers: SecurityProviders | None = None,
 ) -> EmbeddingApplicationComposition:
     """Wire the existing local provider, persistence, and INDEX finalizer."""
 
-    security = create_security_providers(settings)
+    security = security_providers or create_security_providers(settings)
     cancellation_check = _NeverCancelled() if cancellation is None else cancellation
     current_clock = _utc_millisecond_clock if clock is None else clock
     name_persistence = InsecureDevelopmentOnlyWorkspaceNamePersistence()

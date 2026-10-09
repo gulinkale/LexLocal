@@ -12,6 +12,7 @@ from lexlocal.application.ports.chat import (
     ChatCompletionRegistration,
     ChatCompletionTarget,
     ChatFailureUpdate,
+    ChatIntakeRegistration,
     ChatPersistenceError,
     ChatRepository,
     ChatResponseContractVersion,
@@ -177,6 +178,39 @@ class SQLiteChatRepository(ChatRepository):
         except Exception:
             raise ChatPersistenceError("CHAT terminal reconstruction failed") from None
 
+    def add_intake(self, registration: ChatIntakeRegistration) -> bool:
+        """Stage one exact intake or reconstruct its compatible committed graph."""
+
+        self._require_transaction()
+        if not isinstance(registration, ChatIntakeRegistration):
+            raise ChatPersistenceError("CHAT intake registration is invalid")
+        try:
+            self._require_intake_source(registration)
+            existing_row = self._qa_row(registration.qa_request_id)
+            if existing_row is not None:
+                target = self.get_target(
+                    registration.workspace_id,
+                    registration.qa_request_id,
+                )
+                if target != registration.target:
+                    raise ChatPersistenceError("CHAT intake conflicts with existing state")
+                self._require_compatible_intake(registration)
+                return True
+
+            self._require_intake_ids_absent(registration)
+            payload = self._encode_text(
+                registration.question,
+                workspace_id=registration.workspace_id,
+                message_id=registration.question_message_id,
+            )
+            timestamp = self._timestamp(registration.created_at)
+            self._insert_intake(registration, payload, timestamp)
+            return False
+        except ChatPersistenceError:
+            raise
+        except Exception:
+            raise ChatPersistenceError("CHAT intake persistence failed") from None
+
     def add(self, registration: ChatCompletionRegistration) -> None:
         """Stage one complete terminal graph on the caller's transaction."""
 
@@ -266,6 +300,261 @@ class SQLiteChatRepository(ChatRepository):
             raise
         except Exception:
             raise ChatPersistenceError("CHAT failure persistence failed") from None
+
+    def _require_intake_source(self, registration: ChatIntakeRegistration) -> None:
+        generation = registration.active_generation
+        row = self._connection.execute(
+            """
+            SELECT w.state AS workspace_state,
+                   d.workspace_id AS document_workspace_id,
+                   d.state AS document_state,
+                   v.workspace_id AS version_workspace_id,
+                   v.document_id AS version_document_id,
+                   v.state AS version_state,
+                   j.workspace_id AS job_workspace_id,
+                   j.document_version_id AS job_version_id,
+                   j.state AS job_state,
+                   g.workspace_id AS generation_workspace_id,
+                   g.document_version_id AS generation_version_id,
+                   g.processing_job_id AS generation_job_id,
+                   g.state AS generation_state,
+                   g.embedding_model_id,
+                   g.chunking_profile_version,
+                   g.normalization_profile_version,
+                   g.embedding_dimensions,
+                   g.vector_dtype,
+                   g.activated_at AS generation_activated_at,
+                   g.archived_at AS generation_archived_at
+            FROM workspaces AS w
+            LEFT JOIN documents AS d
+              ON d.id = ? AND d.workspace_id = w.id
+            LEFT JOIN document_versions AS v
+              ON v.id = ? AND v.workspace_id = w.id
+            LEFT JOIN document_processing_jobs AS j
+              ON j.id = ? AND j.workspace_id = w.id
+            LEFT JOIN index_generations AS g
+              ON g.id = ? AND g.workspace_id = w.id
+            WHERE w.id = ?
+            """,
+            (
+                str(registration.document_id),
+                str(registration.document_version_id),
+                str(generation.processing_job_id),
+                str(generation.id),
+                str(registration.workspace_id),
+            ),
+        ).fetchone()
+        if (
+            row is None
+            or row["workspace_state"] != "ACTIVE"
+            or row["document_workspace_id"] != str(registration.workspace_id)
+            or row["document_state"] != "ACTIVE"
+            or row["version_workspace_id"] != str(registration.workspace_id)
+            or row["version_document_id"] != str(registration.document_id)
+            or row["version_state"] != "ACTIVE"
+            or row["job_workspace_id"] != str(registration.workspace_id)
+            or row["job_version_id"] != str(registration.document_version_id)
+            or row["job_state"] not in ("READY", "READY_WITH_WARNINGS")
+            or row["generation_workspace_id"] != str(registration.workspace_id)
+            or row["generation_version_id"] != str(registration.document_version_id)
+            or row["generation_job_id"] != str(generation.processing_job_id)
+            or row["generation_state"] != "ACTIVE"
+            or row["embedding_model_id"] != str(generation.embedding_model_id)
+            or row["chunking_profile_version"]
+            != generation.chunking_profile_version
+            or row["normalization_profile_version"]
+            != generation.normalization_profile_version
+            or row["embedding_dimensions"] != generation.embedding_dimensions
+            or row["vector_dtype"] != "float32"
+            or row["generation_activated_at"] is None
+            or row["generation_archived_at"] is not None
+        ):
+            raise ChatPersistenceError("CHAT intake source is unavailable")
+
+    def _require_intake_ids_absent(self, registration: ChatIntakeRegistration) -> None:
+        row = self._connection.execute(
+            """
+            SELECT
+              EXISTS(SELECT 1 FROM chats WHERE id = ?) AS chat_exists,
+              EXISTS(SELECT 1 FROM chat_scope_documents WHERE chat_id = ?)
+                AS chat_scope_exists,
+              EXISTS(SELECT 1 FROM chat_messages WHERE id = ?) AS message_exists,
+              EXISTS(SELECT 1 FROM qa_requests WHERE id = ?) AS qa_exists,
+              EXISTS(SELECT 1 FROM qa_scope_versions WHERE qa_request_id = ?)
+                AS qa_scope_exists
+            """,
+            (
+                str(registration.chat_id),
+                str(registration.chat_id),
+                str(registration.question_message_id),
+                str(registration.qa_request_id),
+                str(registration.qa_request_id),
+            ),
+        ).fetchone()
+        if row is None or any(row):
+            raise ChatPersistenceError("CHAT intake state is partial or conflicting")
+
+    def _require_compatible_intake(
+        self,
+        registration: ChatIntakeRegistration,
+    ) -> None:
+        timestamp = self._timestamp(registration.created_at)
+        row = self._connection.execute(
+            """
+            SELECT c.title_ciphertext, c.title_source,
+                   c.created_at AS chat_created_at,
+                   c.updated_at AS chat_updated_at,
+                   m.created_at AS message_created_at,
+                   q.created_at AS request_created_at,
+                   q.answer_message_id, q.started_at, q.completed_at,
+                   q.evidence_state, q.chat_model_id,
+                   q.prompt_contract_version, q.top_k,
+                   q.evidence_policy_version, q.error_code,
+                   q.error_metadata_json,
+                   cs.included_at AS chat_scope_included_at,
+                   qs.included_at AS qa_scope_included_at,
+                   (SELECT COUNT(*) FROM chat_messages WHERE chat_id = c.id)
+                     AS message_count,
+                   (SELECT COUNT(*) FROM qa_requests WHERE chat_id = c.id)
+                     AS request_count,
+                   (SELECT COUNT(*) FROM chat_scope_documents WHERE chat_id = c.id)
+                     AS chat_scope_count,
+                   (SELECT COUNT(*) FROM qa_scope_versions
+                    WHERE qa_request_id = q.id) AS qa_scope_count
+            FROM qa_requests AS q
+            JOIN chats AS c
+              ON c.id = q.chat_id AND c.workspace_id = q.workspace_id
+            JOIN chat_messages AS m
+              ON m.id = q.question_message_id AND m.workspace_id = q.workspace_id
+            JOIN chat_scope_documents AS cs
+              ON cs.chat_id = c.id AND cs.workspace_id = c.workspace_id
+             AND cs.document_id = ?
+            JOIN qa_scope_versions AS qs
+              ON qs.qa_request_id = q.id AND qs.workspace_id = q.workspace_id
+             AND qs.document_id = ? AND qs.document_version_id = ?
+            WHERE q.id = ? AND q.workspace_id = ?
+            """,
+            (
+                str(registration.document_id),
+                str(registration.document_id),
+                str(registration.document_version_id),
+                str(registration.qa_request_id),
+                str(registration.workspace_id),
+            ),
+        ).fetchone()
+        nullable_request_fields = (
+            "answer_message_id",
+            "started_at",
+            "completed_at",
+            "evidence_state",
+            "chat_model_id",
+            "prompt_contract_version",
+            "top_k",
+            "evidence_policy_version",
+            "error_code",
+            "error_metadata_json",
+        )
+        if (
+            row is None
+            or row["title_ciphertext"] is not None
+            or row["title_source"] is not None
+            or any(row[name] is not None for name in nullable_request_fields)
+            or any(
+                row[name] != timestamp
+                for name in (
+                    "chat_created_at",
+                    "chat_updated_at",
+                    "message_created_at",
+                    "request_created_at",
+                    "chat_scope_included_at",
+                    "qa_scope_included_at",
+                )
+            )
+            or row["message_count"] != 1
+            or row["request_count"] != 1
+            or row["chat_scope_count"] != 1
+            or row["qa_scope_count"] != 1
+        ):
+            raise ChatPersistenceError("CHAT intake state is partial or conflicting")
+
+    def _insert_intake(
+        self,
+        registration: ChatIntakeRegistration,
+        question_payload: bytes,
+        timestamp: str,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO chats (
+                id, workspace_id, title_ciphertext, title_source,
+                state, created_at, updated_at
+            ) VALUES (?, ?, NULL, NULL, 'ACTIVE', ?, ?)
+            """,
+            (
+                str(registration.chat_id),
+                str(registration.workspace_id),
+                timestamp,
+                timestamp,
+            ),
+        )
+        self._connection.execute(
+            """
+            INSERT INTO chat_scope_documents (
+                chat_id, workspace_id, document_id, included_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                str(registration.chat_id),
+                str(registration.workspace_id),
+                str(registration.document_id),
+                timestamp,
+            ),
+        )
+        self._connection.execute(
+            """
+            INSERT INTO chat_messages (
+                id, workspace_id, chat_id, role, sequence_number,
+                content_ciphertext, created_at
+            ) VALUES (?, ?, ?, 'USER', 1, ?, ?)
+            """,
+            (
+                str(registration.question_message_id),
+                str(registration.workspace_id),
+                str(registration.chat_id),
+                question_payload,
+                timestamp,
+            ),
+        )
+        self._connection.execute(
+            """
+            INSERT INTO qa_requests (
+                id, workspace_id, chat_id, question_message_id,
+                state, created_at
+            ) VALUES (?, ?, ?, ?, 'DRAFT', ?)
+            """,
+            (
+                str(registration.qa_request_id),
+                str(registration.workspace_id),
+                str(registration.chat_id),
+                str(registration.question_message_id),
+                timestamp,
+            ),
+        )
+        self._connection.execute(
+            """
+            INSERT INTO qa_scope_versions (
+                qa_request_id, workspace_id, document_id,
+                document_version_id, included_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                str(registration.qa_request_id),
+                str(registration.workspace_id),
+                str(registration.document_id),
+                str(registration.document_version_id),
+                timestamp,
+            ),
+        )
 
     def _qa_row(self, qa_request_id: QaRequestId) -> sqlite3.Row | None:
         row: sqlite3.Row | None = self._connection.execute(

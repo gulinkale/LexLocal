@@ -21,6 +21,8 @@ from lexlocal.application.ports.chat import (
     ChatError,
     ChatFailureCode,
     ChatFailureUpdate,
+    ChatIntakeRegistration,
+    ChatIntakeResult,
     ChatIntegrityError,
     ChatPersistenceError,
     ChatRepository,
@@ -137,6 +139,21 @@ def _target(
         else scope_versions,
         state,
         answer_message_id,
+    )
+
+
+def _intake() -> ChatIntakeRegistration:
+    generation = _retrieval().scope.generations[0].persisted.generation
+    return ChatIntakeRegistration(
+        WORKSPACE_ID,
+        CHAT_ID,
+        QUESTION_MESSAGE_ID,
+        QA_REQUEST_ID,
+        DOCUMENT_ID,
+        VERSION_ID,
+        generation,
+        QUESTION,
+        NOW,
     )
 
 
@@ -388,6 +405,10 @@ class _RepositoryDouble:
     ) -> ChatTerminalGraph | None:
         return None
 
+    def add_intake(self, registration: ChatIntakeRegistration) -> bool:
+        self.intake = registration
+        return False
+
     def add(self, registration: ChatCompletionRegistration) -> None:
         self.registration = registration
 
@@ -402,6 +423,52 @@ class _CancellationDouble:
 
 _REPOSITORY_CONFORMANCE: ChatRepository = _RepositoryDouble()
 _CANCELLATION_CONFORMANCE: ChatCancellationCheck = _CancellationDouble()
+
+
+def test_intake_contract_preserves_exact_private_question_and_scope() -> None:
+    registration = _intake()
+    target = registration.target
+    result = ChatIntakeResult(registration.qa_request_id, reused=False)
+
+    assert target.question == QUESTION
+    assert target.question_sequence_number == 1
+    assert target.state is QaRequestState.DRAFT
+    assert target.scope_versions == (
+        QaScopeVersionReference(
+            WORKSPACE_ID,
+            QA_REQUEST_ID,
+            DOCUMENT_ID,
+            VERSION_ID,
+            NOW,
+        ),
+    )
+    assert result.qa_request_id == QA_REQUEST_ID
+    assert QUESTION.strip() not in repr(registration)
+    for protected in (
+        WORKSPACE_ID,
+        CHAT_ID,
+        QUESTION_MESSAGE_ID,
+        QA_REQUEST_ID,
+        DOCUMENT_ID,
+        VERSION_ID,
+        registration.active_generation.id,
+    ):
+        assert str(protected) not in repr(registration)
+        assert str(protected) not in repr(result)
+
+
+def test_intake_contract_rejects_invalid_question_and_generation_safely() -> None:
+    registration = _intake()
+    with pytest.raises(InvalidChatInput, match="registration is invalid"):
+        replace(registration, question=" \t\n")
+    with pytest.raises(ChatIntegrityError, match="ownership is invalid"):
+        replace(
+            registration,
+            active_generation=replace(
+                registration.active_generation,
+                state=IndexGenerationState.ARCHIVED,
+            ),
+        )
 
 
 def test_target_preserves_private_question_and_exact_authoritative_scope() -> None:
@@ -726,7 +793,7 @@ def test_errors_and_protocols_are_minimal_and_transaction_neutral() -> None:
         name
         for name, value in vars(ChatRepository).items()
         if callable(value) and not name.startswith("_")
-    } == {"get_target", "get_completed", "add", "record_failure"}
+    } == {"get_target", "get_completed", "add_intake", "add", "record_failure"}
     assert not hasattr(ChatRepository, "commit")
     assert not hasattr(ChatRepository, "rollback")
     assert {
