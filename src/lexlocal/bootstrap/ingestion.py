@@ -17,7 +17,7 @@ from lexlocal.application.ports.security import (
 )
 from lexlocal.application.ports.unit_of_work import UnitOfWork
 from lexlocal.application.workspaces import ActiveWorkspaceScope
-from lexlocal.bootstrap.security import create_security_providers
+from lexlocal.bootstrap.security import SecurityProviders, create_security_providers
 from lexlocal.bootstrap.settings import AppSettings
 from lexlocal.domain.identifiers import (
     DocumentId,
@@ -57,10 +57,11 @@ def compose_ingestion_application(
     processing_job_id_factory: Callable[[], ProcessingJobId] | None = None,
     stored_blob_id_factory: Callable[[], StoredBlobId] | None = None,
     clock: Callable[[], datetime] | None = None,
+    security_providers: SecurityProviders | None = None,
 ) -> IngestionApplicationComposition:
     """Wire approved development/test ingestion dependencies after security checks."""
 
-    security = create_security_providers(settings)
+    security = security_providers or create_security_providers(settings)
     storage = (
         security.controlled_source_storage
         if controlled_source_storage is None

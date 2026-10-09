@@ -1,7 +1,7 @@
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _ALLOWED_ENVIRONMENTS = frozenset({"development", "test", "production"})
@@ -23,6 +23,12 @@ _MAX_RETRIEVAL_SIMILARITY = 1.0
 _MODEL_ALIAS_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 
 
+def default_foundry_model_cache_dir() -> Path:
+    """Return the canonical Foundry model cache independently of application data."""
+
+    return Path.home() / ".foundry" / "cache" / "models"
+
+
 @dataclass(frozen=True, slots=True)
 class AppSettings:
     """Runtime configuration required to bootstrap LexLocal."""
@@ -34,6 +40,9 @@ class AppSettings:
     security_provider: str = ""
     chat_model_alias: str = _DEFAULT_CHAT_MODEL_ALIAS
     embedding_model_alias: str = _DEFAULT_EMBEDDING_MODEL_ALIAS
+    foundry_model_cache_dir: Path = field(
+        default_factory=default_foundry_model_cache_dir
+    )
     index_chunk_size: int = _DEFAULT_INDEX_CHUNK_SIZE
     index_chunk_overlap: int = _DEFAULT_INDEX_CHUNK_OVERLAP
     embedding_batch_size: int = _DEFAULT_EMBEDDING_BATCH_SIZE
@@ -173,6 +182,14 @@ def load_settings(
         "LEXLOCAL_EMBEDDING_MODEL_ALIAS",
         _DEFAULT_EMBEDDING_MODEL_ALIAS,
     )
+    configured_foundry_model_cache_dir = values.get(
+        "LEXLOCAL_FOUNDRY_MODEL_CACHE_DIR"
+    )
+    foundry_model_cache_dir = (
+        Path(configured_foundry_model_cache_dir).expanduser()
+        if configured_foundry_model_cache_dir
+        else default_foundry_model_cache_dir()
+    )
     index_chunk_size = _load_non_negative_integer(
         values,
         "LEXLOCAL_INDEX_CHUNK_SIZE",
@@ -213,6 +230,7 @@ def load_settings(
         security_provider=security_provider,
         chat_model_alias=chat_model_alias,
         embedding_model_alias=embedding_model_alias,
+        foundry_model_cache_dir=foundry_model_cache_dir,
         index_chunk_size=index_chunk_size,
         index_chunk_overlap=index_chunk_overlap,
         embedding_batch_size=embedding_batch_size,

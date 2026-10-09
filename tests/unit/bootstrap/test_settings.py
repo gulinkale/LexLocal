@@ -17,6 +17,9 @@ def test_load_settings_uses_defaults() -> None:
     assert settings.security_provider == "insecure-development-only"
     assert settings.chat_model_alias == "qwen3-4b"
     assert settings.embedding_model_alias == "qwen3-embedding-0.6b"
+    assert settings.foundry_model_cache_dir == (
+        Path.home() / ".foundry" / "cache" / "models"
+    )
     assert settings.index_chunk_size == 1000
     assert settings.index_chunk_overlap == 200
     assert settings.embedding_batch_size == 32
@@ -33,6 +36,7 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
             "LEXLOCAL_SECURITY_PROVIDER": "explicit-provider",
             "LEXLOCAL_CHAT_MODEL_ALIAS": "  explicit-chat  ",
             "LEXLOCAL_EMBEDDING_MODEL_ALIAS": "explicit-embedding:2",
+            "LEXLOCAL_FOUNDRY_MODEL_CACHE_DIR": "~/synthetic-foundry-cache",
             "LEXLOCAL_INDEX_CHUNK_SIZE": " 256 ",
             "LEXLOCAL_INDEX_CHUNK_OVERLAP": "32",
             "LEXLOCAL_EMBEDDING_BATCH_SIZE": "16",
@@ -47,11 +51,25 @@ def test_load_settings_accepts_explicit_values(tmp_path: Path) -> None:
     assert settings.security_provider == "explicit-provider"
     assert settings.chat_model_alias == "explicit-chat"
     assert settings.embedding_model_alias == "explicit-embedding:2"
+    assert settings.foundry_model_cache_dir == (
+        Path.home() / "synthetic-foundry-cache"
+    )
     assert settings.index_chunk_size == 256
     assert settings.index_chunk_overlap == 32
     assert settings.embedding_batch_size == 16
     assert settings.retrieval_top_k == 7
     assert settings.retrieval_min_similarity == -0.25
+
+
+def test_foundry_model_cache_default_is_independent_of_data_dir(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings({"LEXLOCAL_DATA_DIR": str(tmp_path)})
+
+    assert settings.data_dir == tmp_path
+    assert settings.foundry_model_cache_dir == (
+        Path.home() / ".foundry" / "cache" / "models"
+    )
 
 
 @pytest.mark.parametrize("environment", ["development", "test"])

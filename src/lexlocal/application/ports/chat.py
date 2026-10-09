@@ -25,6 +25,7 @@ from lexlocal.domain.identifiers import (
     RetrievalRunId,
     WorkspaceId,
 )
+from lexlocal.domain.processing import IndexGeneration, IndexGenerationState
 from lexlocal.domain.retrieval import EvidenceRank, EvidenceSufficiency
 
 
@@ -90,6 +91,79 @@ class ChatFailureCode(StrEnum):
     PERSISTENCE_FAILED = "PERSISTENCE_FAILED"
     UNEXPECTED_FAILURE = "UNEXPECTED_FAILURE"
     CANCELLED = "CANCELLED"
+
+
+@dataclass(frozen=True, slots=True)
+class ChatIntakeRegistration:
+    """Carry one immutable one-question intake attempt for atomic staging."""
+
+    workspace_id: WorkspaceId = field(repr=False)
+    chat_id: ChatId = field(repr=False)
+    question_message_id: ChatMessageId = field(repr=False)
+    qa_request_id: QaRequestId = field(repr=False)
+    document_id: DocumentId = field(repr=False)
+    document_version_id: DocumentVersionId = field(repr=False)
+    active_generation: IndexGeneration = field(repr=False)
+    question: str = field(repr=False)
+    created_at: datetime = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.workspace_id, WorkspaceId)
+            or not isinstance(self.chat_id, ChatId)
+            or not isinstance(self.question_message_id, ChatMessageId)
+            or not isinstance(self.qa_request_id, QaRequestId)
+            or not isinstance(self.document_id, DocumentId)
+            or not isinstance(self.document_version_id, DocumentVersionId)
+            or not isinstance(self.active_generation, IndexGeneration)
+            or not isinstance(self.question, str)
+            or not self.question.strip()
+        ):
+            raise InvalidChatInput("CHAT intake registration is invalid")
+        _require_utc(self.created_at)
+        if (
+            self.active_generation.state is not IndexGenerationState.ACTIVE
+            or self.active_generation.workspace_id != self.workspace_id
+            or self.active_generation.document_version_id != self.document_version_id
+        ):
+            raise ChatIntegrityError("CHAT intake ownership is invalid")
+
+    @property
+    def target(self) -> "ChatCompletionTarget":
+        """Return the exact DRAFT target represented by this intake attempt."""
+
+        return ChatCompletionTarget(
+            workspace_id=self.workspace_id,
+            chat_id=self.chat_id,
+            qa_request_id=self.qa_request_id,
+            question_message_id=self.question_message_id,
+            question_sequence_number=1,
+            question=self.question,
+            scope_versions=(
+                QaScopeVersionReference(
+                    self.workspace_id,
+                    self.qa_request_id,
+                    self.document_id,
+                    self.document_version_id,
+                    self.created_at,
+                ),
+            ),
+            state=QaRequestState.DRAFT,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ChatIntakeResult:
+    """Return one durable QA identity without exposing it through repr."""
+
+    qa_request_id: QaRequestId = field(repr=False)
+    reused: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.qa_request_id, QaRequestId) or not isinstance(
+            self.reused, bool
+        ):
+            raise InvalidChatInput("CHAT intake result is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -600,6 +674,11 @@ class ChatRepository(Protocol):
         qa_request_id: QaRequestId,
     ) -> ChatTerminalGraph | None:
         """Reconstruct the sole complete compatible terminal graph, when present."""
+
+        ...
+
+    def add_intake(self, registration: ChatIntakeRegistration) -> bool:
+        """Stage one intake or return True for its exact compatible reconstruction."""
 
         ...
 

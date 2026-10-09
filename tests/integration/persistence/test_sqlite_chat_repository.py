@@ -3,6 +3,7 @@
 import sqlite3
 import struct
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from lexlocal.application.ports.chat import (
     ChatCompletionRegistration,
     ChatFailureCode,
     ChatFailureUpdate,
+    ChatIntakeRegistration,
     ChatPersistenceError,
     ChatResponseContractVersion,
     QaRequestState,
@@ -58,13 +60,16 @@ from lexlocal.domain.identifiers import (
     ChunkId,
     CitationId,
     DocumentId,
+    DocumentVersionId,
     EvidenceItemId,
     IndexGenerationId,
     LocalModelId,
+    ProcessingJobId,
     QaRequestId,
     RetrievalRunId,
     WorkspaceId,
 )
+from lexlocal.domain.processing import IndexGeneration, IndexGenerationState
 from lexlocal.domain.retrieval import Evidence, EvidenceRank, EvidenceSufficiency, SimilarityScore
 from lexlocal.infrastructure.persistence.migration_runner import run_migrations
 from lexlocal.infrastructure.persistence.migrations import (
@@ -96,6 +101,9 @@ RETRIEVAL_RUN_ID = RetrievalRunId("30000000-0000-4000-8000-000000000001")
 EMBEDDING_MODEL_ID = LocalModelId("40000000-0000-4000-8000-000000000001")
 CHAT_MODEL_ID = LocalModelId("41000000-0000-4000-8000-000000000001")
 DOCUMENT_ID = DocumentId("50000000-0000-4000-8000-000000000001")
+VERSION_ID = DocumentVersionId("60000000-0000-4000-8000-000000000001")
+JOB_ID = ProcessingJobId("70000000-0000-4000-8000-000000000001")
+GENERATION_ID = IndexGenerationId("80000000-0000-4000-8000-000000000001")
 ANSWER_ID = ChatMessageId("d0000000-0000-4000-8000-000000000001")
 EVIDENCE_ID = EvidenceItemId("c0000000-0000-4000-8000-000000000001")
 QUESTION = " Exact anonymous question Ω\n"
@@ -147,6 +155,17 @@ def database(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     if connection.in_transaction:
         connection.rollback()
     connection.close()
+
+
+@pytest.fixture
+def intake_database(database: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    database.execute("DELETE FROM qa_scope_versions")
+    database.execute("DELETE FROM qa_requests")
+    database.execute("DELETE FROM chat_messages")
+    database.execute("DELETE FROM chats")
+    database.commit()
+    database.execute("BEGIN")
+    yield database
 
 
 def _encode_text(
@@ -396,6 +415,33 @@ def _insert_source_graph(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def _intake_registration(
+    *,
+    question: str = QUESTION,
+) -> ChatIntakeRegistration:
+    return ChatIntakeRegistration(
+        WORKSPACE_ID,
+        CHAT_ID,
+        QUESTION_ID,
+        QA_REQUEST_ID,
+        DOCUMENT_ID,
+        VERSION_ID,
+        IndexGeneration(
+            GENERATION_ID,
+            WORKSPACE_ID,
+            VERSION_ID,
+            JOB_ID,
+            EMBEDDING_MODEL_ID,
+            "chunk-v1",
+            "normalize-v1",
+            2,
+            IndexGenerationState.ACTIVE,
+        ),
+        question,
+        NOW,
+    )
+
+
 def _persist_retrieval(
     connection: sqlite3.Connection,
     *,
@@ -531,6 +577,213 @@ def _completion(
             NOW,
         ),
     )
+
+
+def test_intake_stages_exact_graph_and_question_through_codec(
+    intake_database: sqlite3.Connection,
+) -> None:
+    codec = _RecordingCodec()
+    repository = SQLiteChatRepository(intake_database, codec)
+    registration = _intake_registration()
+
+    reused = repository.add_intake(registration)
+    target = repository.get_target(WORKSPACE_ID, QA_REQUEST_ID)
+
+    assert reused is False
+    assert target == registration.target
+    assert target is not None
+    assert target.question == QUESTION
+    assert codec.encoded == [
+        SensitivePayloadContext(
+            WORKSPACE_ID,
+            str(QUESTION_ID),
+            "chat-message-content",
+            1,
+        )
+    ]
+    assert tuple(
+        intake_database.execute(
+            "SELECT state, title_ciphertext, title_source FROM chats"
+        ).fetchone()
+    ) == ("ACTIVE", None, None)
+    assert tuple(
+        intake_database.execute(
+            "SELECT role, sequence_number FROM chat_messages"
+        ).fetchone()
+    ) == ("USER", 1)
+    assert tuple(
+        intake_database.execute(
+            "SELECT state, answer_message_id FROM qa_requests"
+        ).fetchone()
+    ) == ("DRAFT", None)
+    assert intake_database.execute(
+        "SELECT COUNT(*) FROM chat_scope_documents"
+    ).fetchone()[0] == 1
+    assert intake_database.execute(
+        "SELECT COUNT(*) FROM qa_scope_versions"
+    ).fetchone()[0] == 1
+    assert intake_database.in_transaction is True
+
+
+def test_exact_same_intake_reconstructs_read_only_without_duplicate_rows(
+    intake_database: sqlite3.Connection,
+) -> None:
+    repository = SQLiteChatRepository(
+        intake_database,
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+    registration = _intake_registration()
+    assert repository.add_intake(registration) is False
+    before = intake_database.total_changes
+
+    assert repository.add_intake(registration) is True
+
+    assert intake_database.total_changes == before
+    assert intake_database.execute("SELECT COUNT(*) FROM chats").fetchone()[0] == 1
+    assert intake_database.execute(
+        "SELECT COUNT(*) FROM chat_messages"
+    ).fetchone()[0] == 1
+    assert intake_database.execute("SELECT COUNT(*) FROM qa_requests").fetchone()[0] == 1
+    assert intake_database.execute(
+        "SELECT COUNT(*) FROM qa_scope_versions"
+    ).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "DELETE FROM qa_scope_versions",
+        "INSERT INTO chat_messages "
+        "(id, workspace_id, chat_id, role, sequence_number, "
+        "content_ciphertext, created_at) VALUES "
+        "('12000000-0000-4000-8000-000000000099', "
+        "'10000000-0000-4000-8000-000000000001', "
+        "'11000000-0000-4000-8000-000000000001', "
+        "'USER', 2, x'01', '2026-09-16T10:20:30.456Z')",
+        "UPDATE chats SET updated_at = '2026-09-16T10:20:31.456Z'",
+    ],
+    ids=["missing-scope", "duplicate-message", "timestamp-conflict"],
+)
+def test_partial_duplicate_or_conflicting_intake_fails_closed(
+    intake_database: sqlite3.Connection,
+    mutation: str,
+) -> None:
+    repository = SQLiteChatRepository(
+        intake_database,
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+    registration = _intake_registration()
+    repository.add_intake(registration)
+    intake_database.execute(mutation)
+
+    with pytest.raises(ChatPersistenceError) as raised:
+        repository.add_intake(registration)
+
+    assert QUESTION not in str(raised.value)
+    assert str(QA_REQUEST_ID) not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("statement", "parameters"),
+    [
+        ("UPDATE documents SET state = 'DELETED' WHERE id = ?", (str(DOCUMENT_ID),)),
+        (
+            "UPDATE document_versions SET state = 'ARCHIVED' WHERE id = ?",
+            (str(VERSION_ID),),
+        ),
+        (
+            "UPDATE index_generations SET state = 'ARCHIVED', archived_at = ? "
+            "WHERE id = ?",
+            (TIMESTAMP, str(GENERATION_ID)),
+        ),
+        (
+            "UPDATE index_generations SET normalization_profile_version = ? "
+            "WHERE id = ?",
+            ("different-normalization-v1", str(GENERATION_ID)),
+        ),
+    ],
+    ids=[
+        "inactive-document",
+        "inactive-version",
+        "inactive-generation",
+        "generation-metadata-mismatch",
+    ],
+)
+def test_intake_revalidates_exact_active_source_graph_before_writing(
+    intake_database: sqlite3.Connection,
+    statement: str,
+    parameters: tuple[str, ...],
+) -> None:
+    intake_database.execute(statement, parameters)
+    repository = SQLiteChatRepository(
+        intake_database,
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+
+    with pytest.raises(ChatPersistenceError, match="source is unavailable"):
+        repository.add_intake(_intake_registration())
+
+    assert intake_database.execute("SELECT COUNT(*) FROM chats").fetchone()[0] == 0
+    assert intake_database.execute("SELECT COUNT(*) FROM qa_requests").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind", ["missing-generation", "cross-workspace"])
+def test_intake_rejects_generation_or_workspace_substitution_before_codec(
+    intake_database: sqlite3.Connection,
+    kind: str,
+) -> None:
+    registration = _intake_registration()
+    if kind == "missing-generation":
+        registration = replace(
+            registration,
+            active_generation=replace(
+                registration.active_generation,
+                id=IndexGenerationId(
+                    "80000000-0000-4000-8000-000000000099"
+                ),
+            ),
+        )
+    else:
+        registration = replace(
+            registration,
+            workspace_id=OTHER_WORKSPACE_ID,
+            active_generation=replace(
+                registration.active_generation,
+                workspace_id=OTHER_WORKSPACE_ID,
+            ),
+        )
+    codec = _RecordingCodec()
+    repository = SQLiteChatRepository(intake_database, codec)
+
+    with pytest.raises(ChatPersistenceError) as raised:
+        repository.add_intake(registration)
+
+    assert codec.encoded == []
+    assert QUESTION not in str(raised.value)
+    assert str(registration.qa_request_id) not in str(raised.value)
+
+
+def test_intake_repository_is_transaction_neutral_and_caller_rollback_is_complete(
+    intake_database: sqlite3.Connection,
+) -> None:
+    repository = SQLiteChatRepository(
+        intake_database,
+        InsecureDevelopmentOnlyPayloadCodec(),
+    )
+    repository.add_intake(_intake_registration())
+    assert intake_database.in_transaction is True
+
+    intake_database.rollback()
+
+    assert intake_database.execute("SELECT COUNT(*) FROM chats").fetchone()[0] == 0
+    assert intake_database.execute(
+        "SELECT COUNT(*) FROM chat_scope_documents"
+    ).fetchone()[0] == 0
+    assert intake_database.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
+    assert intake_database.execute("SELECT COUNT(*) FROM qa_requests").fetchone()[0] == 0
+    assert intake_database.execute(
+        "SELECT COUNT(*) FROM qa_scope_versions"
+    ).fetchone()[0] == 0
 
 
 def test_target_reconstructs_exact_question_scope_and_codec_context(

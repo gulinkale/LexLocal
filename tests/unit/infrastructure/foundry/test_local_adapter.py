@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import sys
 from collections.abc import Iterable
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -193,9 +194,16 @@ def test_initialize_configures_sdk_once(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setitem(sys.modules, "foundry_local_sdk", fake_sdk)
 
-    runtime = FoundryLocalRuntime.initialize(app_name="synthetic-app")
+    cache_dir = Path("synthetic-cache")
+    runtime = FoundryLocalRuntime.initialize(
+        app_name="synthetic-app",
+        model_cache_dir=cache_dir,
+    )
 
-    configuration.assert_called_once_with(app_name="synthetic-app")
+    configuration.assert_called_once_with(
+        app_name="synthetic-app",
+        model_cache_dir=str(cache_dir),
+    )
     manager_type.initialize.assert_called_once_with("configuration")
     assert isinstance(runtime, FoundryLocalRuntime)
 
@@ -212,7 +220,7 @@ def test_initialize_failure_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> Non
         LocalModelRuntimeError,
         match="local model runtime initialization failed",
     ) as captured:
-        FoundryLocalRuntime.initialize()
+        FoundryLocalRuntime.initialize(model_cache_dir=Path("synthetic-cache"))
 
     assert captured.value.__cause__ is None
 

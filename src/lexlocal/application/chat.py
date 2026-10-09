@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import TypeVar
 
 from lexlocal.application.ports.chat import (
     ChatActivityEvent,
@@ -20,6 +21,8 @@ from lexlocal.application.ports.chat import (
     ChatError,
     ChatFailureCode,
     ChatFailureUpdate,
+    ChatIntakeRegistration,
+    ChatIntakeResult,
     ChatIntegrityError,
     ChatPersistenceError,
     ChatResponseContractVersion,
@@ -27,6 +30,7 @@ from lexlocal.application.ports.chat import (
     InvalidChatInput,
     QaRequestState,
 )
+from lexlocal.application.ports.document_workflow import ActiveDocumentResult
 from lexlocal.application.ports.evidence_sufficiency import (
     EvidenceSufficiencyCancelled,
     EvidenceSufficiencyError,
@@ -57,6 +61,7 @@ from lexlocal.application.retrieval import PrepareRetrieval, StageRetrieval
 from lexlocal.application.workspaces import ActiveWorkspaceScope
 from lexlocal.domain.identifiers import (
     ActivityEventId,
+    ChatId,
     ChatMessageId,
     CitationId,
     QaRequestId,
@@ -65,6 +70,7 @@ from lexlocal.domain.identifiers import (
 from lexlocal.domain.retrieval import EvidenceSufficiency
 
 _EVIDENCE_LABEL = re.compile(r"E[1-9][0-9]*")
+_Identifier = TypeVar("_Identifier")
 
 
 class _InvalidStructuredOutput(Exception):
@@ -376,6 +382,132 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise _InvalidStructuredOutput
         result[key] = value
     return result
+
+
+class StartSingleDocumentQuestion:
+    """Atomically create or reconstruct one exact one-question CHAT intake."""
+
+    def __init__(
+        self,
+        active_scope: ActiveWorkspaceScope,
+        unit_of_work_factory: Callable[[], UnitOfWork],
+        cancellation: ChatCancellationCheck,
+        chat_id_factory: Callable[[], ChatId],
+        question_message_id_factory: Callable[[], ChatMessageId],
+        qa_request_id_factory: Callable[[], QaRequestId],
+        clock: Callable[[], datetime],
+    ) -> None:
+        self._active_scope = active_scope
+        self._unit_of_work_factory = unit_of_work_factory
+        self._cancellation = cancellation
+        self._chat_id_factory = chat_id_factory
+        self._question_message_id_factory = question_message_id_factory
+        self._qa_request_id_factory = qa_request_id_factory
+        self._clock = clock
+
+    def materialize(
+        self,
+        document: ActiveDocumentResult,
+        question: str,
+    ) -> ChatIntakeRegistration:
+        """Create one replayable immutable attempt before any Unit of Work opens."""
+
+        self._checkpoint()
+        workspace_id = self._workspace_id()
+        if (
+            not isinstance(document, ActiveDocumentResult)
+            or document.workspace_id != workspace_id
+        ):
+            raise ChatIntegrityError("CHAT intake document is invalid")
+        if not isinstance(question, str) or not question.strip():
+            raise InvalidChatInput("CHAT intake question is invalid")
+        created_at = self._utc_now()
+        return ChatIntakeRegistration(
+            workspace_id=workspace_id,
+            chat_id=self._identifier(self._chat_id_factory, ChatId),
+            question_message_id=self._identifier(
+                self._question_message_id_factory,
+                ChatMessageId,
+            ),
+            qa_request_id=self._identifier(
+                self._qa_request_id_factory,
+                QaRequestId,
+            ),
+            document_id=document.document_id,
+            document_version_id=document.document_version_id,
+            active_generation=document.active_generation,
+            question=question,
+            created_at=created_at,
+        )
+
+    def __call__(self, registration: ChatIntakeRegistration) -> ChatIntakeResult:
+        """Persist one attempt once or reconstruct its exact committed DRAFT graph."""
+
+        if not isinstance(registration, ChatIntakeRegistration):
+            raise InvalidChatInput("CHAT intake registration is invalid")
+        workspace_id = self._workspace_id()
+        if registration.workspace_id != workspace_id:
+            raise ChatIntegrityError("CHAT intake ownership is invalid")
+        self._checkpoint()
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                reused = unit_of_work.chat.add_intake(registration)
+                if not isinstance(reused, bool):
+                    raise ChatPersistenceError("CHAT intake persistence failed")
+                self._checkpoint()
+                if not reused:
+                    unit_of_work.commit()
+        except ChatCancelled:
+            raise
+        except ChatError:
+            raise
+        except Exception:
+            raise ChatPersistenceError("CHAT intake persistence failed") from None
+        return ChatIntakeResult(registration.qa_request_id, reused)
+
+    def _workspace_id(self) -> WorkspaceId:
+        try:
+            workspace_id = self._active_scope.require_workspace_id()
+        except Exception:
+            raise ChatPersistenceError("active workspace is unavailable") from None
+        if not isinstance(workspace_id, WorkspaceId):
+            raise ChatPersistenceError("active workspace is unavailable")
+        return workspace_id
+
+    def _checkpoint(self) -> None:
+        try:
+            self._cancellation.raise_if_cancelled()
+        except ChatCancelled:
+            raise ChatCancelled("CHAT intake was cancelled") from None
+        except Exception:
+            raise ChatPersistenceError("CHAT intake cancellation check failed") from None
+
+    def _utc_now(self) -> datetime:
+        try:
+            value = self._clock()
+        except Exception:
+            raise ChatPersistenceError("CHAT intake clock failed") from None
+        if (
+            not isinstance(value, datetime)
+            or value.tzinfo is None
+            or value.utcoffset() != timedelta(0)
+            or value.microsecond % 1000 != 0
+        ):
+            raise ChatPersistenceError("CHAT intake clock returned invalid data")
+        return value
+
+    @staticmethod
+    def _identifier(
+        factory: Callable[[], _Identifier],
+        expected_type: type[_Identifier],
+    ) -> _Identifier:
+        try:
+            value = factory()
+        except Exception:
+            raise ChatPersistenceError("CHAT intake identifier generation failed") from None
+        if not isinstance(value, expected_type):
+            raise ChatPersistenceError("CHAT intake identifier generation failed")
+        return value
 
 
 class CompleteChat:

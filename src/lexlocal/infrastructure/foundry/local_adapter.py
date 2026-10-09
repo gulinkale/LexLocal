@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from lexlocal.application.ports.local_models import (
@@ -59,7 +60,12 @@ class FoundryLocalRuntime:
         self._closed = False
 
     @classmethod
-    def initialize(cls, *, app_name: str = "lexlocal") -> FoundryLocalRuntime:
+    def initialize(
+        cls,
+        *,
+        app_name: str = "lexlocal",
+        model_cache_dir: Path,
+    ) -> FoundryLocalRuntime:
         """Initialize the SDK once and translate native initialization failures."""
 
         try:
@@ -68,7 +74,12 @@ class FoundryLocalRuntime:
                 FoundryLocalManager,
             )
 
-            FoundryLocalManager.initialize(Configuration(app_name=app_name))
+            FoundryLocalManager.initialize(
+                Configuration(
+                    app_name=app_name,
+                    model_cache_dir=str(model_cache_dir),
+                )
+            )
             return cls(FoundryLocalManager.instance)
         except Exception:
             raise LocalModelRuntimeError(

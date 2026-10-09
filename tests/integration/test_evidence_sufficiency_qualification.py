@@ -432,7 +432,9 @@ def test_cached_configured_chat_model_is_stable_on_fixed_corpus() -> None:
     settings = load_settings()
     runtime: FoundryLocalRuntime | None = None
     try:
-        runtime = FoundryLocalRuntime.initialize()
+        runtime = FoundryLocalRuntime.initialize(
+            model_cache_dir=settings.foundry_model_cache_dir,
+        )
         status = runtime.resolve_ready(
             model_id=_CHAT_MODEL_ID,
             requested_alias=settings.chat_model_alias,

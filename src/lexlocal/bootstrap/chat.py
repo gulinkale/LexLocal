@@ -14,7 +14,7 @@ from lexlocal.bootstrap.evidence_sufficiency import (
 )
 from lexlocal.bootstrap.foundry import LocalModelComposition
 from lexlocal.bootstrap.retrieval import RetrievalApplicationComposition
-from lexlocal.bootstrap.security import create_security_providers
+from lexlocal.bootstrap.security import SecurityProviders, create_security_providers
 from lexlocal.bootstrap.settings import AppSettings
 from lexlocal.domain.identifiers import (
     ActivityEventId,
@@ -58,10 +58,11 @@ def compose_chat_application(
     citation_id_factory: Callable[[], CitationId] | None = None,
     activity_event_id_factory: Callable[[], ActivityEventId] | None = None,
     clock: Callable[[], datetime] | None = None,
+    security_providers: SecurityProviders | None = None,
 ) -> ChatApplicationComposition:
     """Wire existing RAG, verifier, model, security, and SQLite components."""
 
-    security = create_security_providers(settings)
+    security = security_providers or create_security_providers(settings)
     if sufficiency.policy.verifier_status != local_models.chat_status:
         raise ChatBootstrapConfigurationError("CHAT evidence verifier model binding is invalid")
     try:

@@ -1,20 +1,31 @@
 """Tests for pure CHAT content and atomic completion orchestration."""
 
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
-from lexlocal.application.chat import CompleteChat, PrepareChatContent
+from lexlocal.application.chat import (
+    CompleteChat,
+    PrepareChatContent,
+    StartSingleDocumentQuestion,
+)
 from lexlocal.application.ports.chat import (
     ChatCancelled,
     ChatCompletionTarget,
+    ChatIntakeRegistration,
     ChatIntegrityError,
+    ChatPersistenceError,
     ChatResponseContractVersion,
     InvalidChatInput,
     QaRequestState,
     QaScopeVersionReference,
+)
+from lexlocal.application.ports.document_workflow import (
+    ActiveDocumentReadiness,
+    ActiveDocumentResult,
 )
 from lexlocal.application.ports.evidence_sufficiency import (
     AggregateEvidenceCoverage,
@@ -960,3 +971,248 @@ def test_terminal_graph_must_match_the_separately_loaded_target() -> None:
     assert prepare.calls == evaluate.calls == provider.calls == 0
     assert answers == citations == activities == clock_calls == []
     assert chat.added == chat.failures == []
+
+
+def _ready_document() -> ActiveDocumentResult:
+    resolved = _generation()
+    generation = resolved.persisted.generation
+    return ActiveDocumentResult(
+        workspace_id=WORKSPACE_ID,
+        document_id=resolved.document_id,
+        document_version_id=generation.document_version_id,
+        processing_job_id=generation.processing_job_id,
+        logical_filename="anonymous.pdf",
+        page_count=1,
+        readiness=ActiveDocumentReadiness.READY,
+        active_generation=generation,
+    )
+
+
+class _IntakeCancellation:
+    def __init__(self, cancel_at: int | None = None) -> None:
+        self.cancel_at = cancel_at
+        self.calls = 0
+        self.requested = False
+
+    def cancel(self) -> None:
+        self.requested = True
+
+    def raise_if_cancelled(self) -> None:
+        self.calls += 1
+        if self.requested or self.calls == self.cancel_at:
+            raise ChatCancelled("private cancellation detail")
+
+
+class _IntakeRepository:
+    def __init__(self) -> None:
+        self.registration: ChatIntakeRegistration | None = None
+        self.stage_calls = 0
+        self.fail = False
+
+    def add_intake(self, registration: ChatIntakeRegistration) -> bool:
+        self.stage_calls += 1
+        if self.fail:
+            raise RuntimeError("private intake write detail")
+        if self.registration is None:
+            self.registration = registration
+            return False
+        if self.registration == registration:
+            return True
+        raise ChatPersistenceError("CHAT intake conflicts with existing state")
+
+
+class _IntakeUnitOfWork:
+    def __init__(self, factory: "_IntakeUnitOfWorkFactory") -> None:
+        self.factory = factory
+        self.chat = factory.chat
+        self.commits = 0
+        self.committed = False
+        self.snapshot: ChatIntakeRegistration | None = None
+
+    def __enter__(self):
+        self.factory.active += 1
+        self.snapshot = self.chat.registration
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        if not self.committed:
+            self.chat.registration = self.snapshot
+        self.factory.active -= 1
+
+    def commit(self) -> None:
+        if self.factory.fail_commit:
+            raise RuntimeError("private intake commit detail")
+        self.commits += 1
+        self.committed = True
+        if self.factory.after_commit is not None:
+            self.factory.after_commit()
+
+    def rollback(self) -> None:
+        raise AssertionError("CHAT intake must not explicitly roll back")
+
+
+class _IntakeUnitOfWorkFactory:
+    def __init__(self, chat: _IntakeRepository) -> None:
+        self.chat = chat
+        self.active = 0
+        self.created: list[_IntakeUnitOfWork] = []
+        self.fail_commit = False
+        self.after_commit: Callable[[], None] | None = None
+
+    def __call__(self):
+        unit_of_work = _IntakeUnitOfWork(self)
+        self.created.append(unit_of_work)
+        return unit_of_work
+
+
+def _intake_use_case(
+    *,
+    cancellation: _IntakeCancellation | None = None,
+) -> tuple[
+    StartSingleDocumentQuestion,
+    _IntakeRepository,
+    _IntakeUnitOfWorkFactory,
+    _IntakeCancellation,
+    list[str],
+]:
+    repository = _IntakeRepository()
+    factory = _IntakeUnitOfWorkFactory(repository)
+    current_cancellation = cancellation or _IntakeCancellation()
+    scope = ActiveWorkspaceScope()
+    scope.select(WORKSPACE_ID)
+    calls: list[str] = []
+
+    def identifier(name: str, value):
+        def create():
+            assert factory.active == 0
+            calls.append(name)
+            return value
+
+        return create
+
+    def clock() -> datetime:
+        assert factory.active == 0
+        calls.append("clock")
+        return NOW
+
+    use_case = StartSingleDocumentQuestion(
+        scope,
+        factory,  # type: ignore[arg-type]
+        current_cancellation,
+        identifier(
+            "chat-id",
+            ChatId("a0000000-0000-4000-8000-000000000001"),
+        ),
+        identifier(
+            "message-id",
+            ChatMessageId("a1000000-0000-4000-8000-000000000001"),
+        ),
+        identifier("qa-id", QA_REQUEST_ID),
+        clock,
+    )
+    return use_case, repository, factory, current_cancellation, calls
+
+
+def test_intake_materializes_before_uow_and_commits_exact_question_once() -> None:
+    use_case, repository, factory, _, calls = _intake_use_case()
+
+    registration = use_case.materialize(_ready_document(), QUESTION)
+    result = use_case(registration)
+
+    assert calls == ["clock", "chat-id", "message-id", "qa-id"]
+    assert registration.question == QUESTION
+    assert registration.active_generation == _ready_document().active_generation
+    assert result.qa_request_id == QA_REQUEST_ID
+    assert result.reused is False
+    assert repository.registration is registration
+    assert repository.stage_calls == 1
+    assert len(factory.created) == 1
+    assert factory.created[0].commits == 1
+
+
+def test_same_intake_attempt_reconstructs_without_new_graph_or_commit() -> None:
+    use_case, repository, factory, _, calls = _intake_use_case()
+    registration = use_case.materialize(_ready_document(), QUESTION)
+    first = use_case(registration)
+    second = use_case(registration)
+
+    assert first.reused is False
+    assert second.reused is True
+    assert second.qa_request_id == first.qa_request_id
+    assert repository.registration is registration
+    assert repository.stage_calls == 2
+    assert calls == ["clock", "chat-id", "message-id", "qa-id"]
+    assert sum(item.commits for item in factory.created) == 1
+
+
+@pytest.mark.parametrize("cancel_at", [2, 3])
+def test_intake_cancellation_before_staging_or_commit_leaves_no_graph(
+    cancel_at: int,
+) -> None:
+    cancellation = _IntakeCancellation(cancel_at)
+    use_case, repository, factory, _, _ = _intake_use_case(
+        cancellation=cancellation
+    )
+    registration = use_case.materialize(_ready_document(), QUESTION)
+
+    with pytest.raises(ChatCancelled, match="CHAT intake was cancelled") as raised:
+        use_case(registration)
+
+    assert "private" not in str(raised.value)
+    assert repository.registration is None
+    assert sum(item.commits for item in factory.created) == 0
+
+
+def test_intake_returns_committed_identity_when_cancel_arrives_after_commit() -> None:
+    use_case, repository, factory, cancellation, _ = _intake_use_case()
+    registration = use_case.materialize(_ready_document(), QUESTION)
+    factory.after_commit = cancellation.cancel
+
+    result = use_case(registration)
+
+    assert result.qa_request_id == QA_REQUEST_ID
+    assert result.reused is False
+    assert repository.registration is registration
+    assert cancellation.requested is True
+    assert cancellation.calls == 3
+
+
+@pytest.mark.parametrize("failure", ["write", "commit"])
+def test_intake_write_or_commit_failure_rolls_back_without_private_leak(
+    failure: str,
+) -> None:
+    use_case, repository, factory, _, _ = _intake_use_case()
+    registration = use_case.materialize(_ready_document(), QUESTION)
+    repository.fail = failure == "write"
+    factory.fail_commit = failure == "commit"
+
+    with pytest.raises(ChatPersistenceError, match="persistence failed") as raised:
+        use_case(registration)
+
+    assert QUESTION not in str(raised.value)
+    assert str(QA_REQUEST_ID) not in str(raised.value)
+    assert "private" not in str(raised.value)
+    assert repository.registration is None
+
+
+def test_intake_fails_closed_on_conflict_or_active_workspace_substitution() -> None:
+    use_case, repository, _, _, _ = _intake_use_case()
+    registration = use_case.materialize(_ready_document(), QUESTION)
+    use_case(registration)
+
+    with pytest.raises(ChatPersistenceError, match="conflicts"):
+        use_case(replace(registration, question="Different synthetic question"))
+
+    other_scope = ActiveWorkspaceScope()
+    other_scope.select(WorkspaceId("10000000-0000-4000-8000-000000000099"))
+    substituted = StartSingleDocumentQuestion(
+        other_scope,
+        _IntakeUnitOfWorkFactory(repository),  # type: ignore[arg-type]
+        _IntakeCancellation(),
+        lambda: registration.chat_id,
+        lambda: registration.question_message_id,
+        lambda: registration.qa_request_id,
+        lambda: NOW,
+    )
+    with pytest.raises(ChatIntegrityError, match="ownership is invalid"):
+        substituted(registration)

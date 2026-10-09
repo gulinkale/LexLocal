@@ -66,12 +66,19 @@ def compose_local_models(
     settings: AppSettings,
     connection_factory: SQLiteConnectionFactory,
     *,
-    runtime_factory: Callable[[], _Runtime] = FoundryLocalRuntime.initialize,
+    runtime_factory: Callable[[], _Runtime] | None = None,
     model_id_factory: Callable[[], LocalModelId] | None = None,
 ) -> LocalModelComposition:
     """Resolve, persist, and expose both exact local capabilities atomically."""
 
-    runtime = runtime_factory()
+    runtime = (
+        runtime_factory()
+        if runtime_factory is not None
+        else FoundryLocalRuntime.initialize(
+            app_name=settings.app_name,
+            model_cache_dir=settings.foundry_model_cache_dir,
+        )
+    )
     create_model_id = model_id_factory or _new_model_id
     try:
         chat_status = runtime.resolve_ready(

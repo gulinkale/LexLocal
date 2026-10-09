@@ -21,7 +21,7 @@ from lexlocal.application.ports.processing import ProcessingResult
 from lexlocal.application.ports.security import SensitivePayloadCodec
 from lexlocal.application.ports.unit_of_work import UnitOfWork
 from lexlocal.application.workspaces import ActiveWorkspaceScope
-from lexlocal.bootstrap.security import create_security_providers
+from lexlocal.bootstrap.security import SecurityProviders, create_security_providers
 from lexlocal.bootstrap.settings import AppSettings
 from lexlocal.domain.identifiers import ChunkId, IndexGenerationId
 from lexlocal.infrastructure.persistence.sqlite_connection import SQLiteConnectionFactory
@@ -59,10 +59,11 @@ def compose_indexing_application(
     chunk_id_factory: Callable[[], ChunkId] | None = None,
     index_generation_id_factory: Callable[[], IndexGenerationId] | None = None,
     clock: Callable[[], datetime] | None = None,
+    security_providers: SecurityProviders | None = None,
 ) -> IndexingApplicationComposition:
     """Wire validated development/test indexing dependencies without running them."""
 
-    security = create_security_providers(settings)
+    security = security_providers or create_security_providers(settings)
     if (
         not isinstance(embedding_status, LocalModelStatus)
         or embedding_status.readiness is not ModelReadiness.READY

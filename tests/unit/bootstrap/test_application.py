@@ -1,6 +1,7 @@
-"""Unit tests for the real application startup sequence."""
+"""Unit tests for the staged desktop application startup sequence."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -12,8 +13,6 @@ from lexlocal.infrastructure.persistence.migration_runner import MigrationHistor
 
 
 def make_settings(data_dir: Path) -> AppSettings:
-    """Create application settings for startup tests."""
-
     return AppSettings(
         app_name="LexLocal",
         environment="test",
@@ -23,238 +22,166 @@ def make_settings(data_dir: Path) -> AppSettings:
     )
 
 
-def test_run_initializes_persistence_before_showing_window(
+def _install_successful_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    events: list[str],
+    *,
+    event_loop_error: Exception | None = None,
+    shutdown_result: bool = True,
+) -> tuple[Mock, SimpleNamespace]:
+    settings = make_settings(tmp_path)
+    logger = Mock()
+    connection_factory = Mock()
+    security = Mock()
+    qt_application = Mock()
+    main_window = Mock()
+    ui = SimpleNamespace(
+        main_window=main_window,
+        start=Mock(side_effect=lambda: events.append("start_ui")),
+        shutdown=Mock(
+            side_effect=lambda: events.append("shutdown_ui") or shutdown_result
+        ),
+    )
+    if event_loop_error is None:
+        qt_application.exec.side_effect = lambda: events.append("event_loop") or 0
+    else:
+        qt_application.exec.side_effect = event_loop_error
+    main_window.show.side_effect = lambda: events.append("show_window")
+
+    monkeypatch.setattr(
+        application_bootstrap,
+        "load_settings",
+        lambda: events.append("settings") or settings,
+    )
+    monkeypatch.setattr(
+        application_bootstrap,
+        "configure_logging",
+        lambda actual: events.append("logging") or logger,
+    )
+    monkeypatch.setattr(
+        application_bootstrap,
+        "initialize_persistence",
+        lambda actual: events.append("persistence") or connection_factory,
+    )
+    monkeypatch.setattr(
+        application_bootstrap,
+        "create_security_providers",
+        lambda actual: events.append("security") or security,
+    )
+    monkeypatch.setattr(
+        application_bootstrap,
+        "_qt_application",
+        lambda argv: events.append("qt_shell") or qt_application,
+    )
+
+    def compose(actual_settings: object, actual_factory: object, actual_security: object):
+        assert actual_settings is settings
+        assert actual_factory is connection_factory
+        assert actual_security is security
+        events.append("compose_ui")
+        return ui
+
+    monkeypatch.setattr(application_bootstrap, "compose_ui_application", compose)
+    return logger, ui
+
+
+def test_run_preserves_required_startup_and_shutdown_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = make_settings(tmp_path)
     events: list[str] = []
-    logger = Mock()
-    connection_factory = Mock()
-    workspace_application = Mock()
-    local_models = Mock()
-    qt_application = Mock()
-    qt_application.exec.return_value = 0
-    main_window = Mock()
+    logger, ui = _install_successful_startup(monkeypatch, tmp_path, events)
 
-    def load() -> AppSettings:
-        events.append("load_settings")
-        return settings
-
-    def configure(actual_settings: AppSettings) -> Mock:
-        assert actual_settings is settings
-        events.append("configure_logging")
-        return logger
-
-    monkeypatch.setattr(application_bootstrap, "load_settings", load)
-    monkeypatch.setattr(application_bootstrap, "configure_logging", configure)
-
-    def initialize(actual_settings: AppSettings) -> Mock:
-        assert actual_settings is settings
-        events.append("initialize_persistence")
-        return connection_factory
-
-    def create(argv: object) -> tuple[Mock, Mock]:
-        assert argv == ["lexlocal-test"]
-        events.append("create_application")
-        return qt_application, main_window
-
-    def compose(actual_settings: AppSettings, actual_factory: Mock) -> Mock:
-        assert actual_settings is settings
-        assert actual_factory is connection_factory
-        events.append("compose_workspace_application")
-        return workspace_application
-
-    def compose_models(actual_settings: AppSettings, actual_factory: Mock) -> Mock:
-        assert actual_settings is settings
-        assert actual_factory is connection_factory
-        events.append("compose_local_models")
-        local_models.close.side_effect = lambda: events.append("close_local_models")
-        return local_models
-
-    def show() -> None:
-        events.append("show_window")
-
-    def execute() -> int:
-        events.append("execute_event_loop")
-        return 0
-
-    monkeypatch.setattr(application_bootstrap, "initialize_persistence", initialize)
-    monkeypatch.setattr(
-        application_bootstrap,
-        "compose_workspace_application",
-        compose,
-    )
-    monkeypatch.setattr(application_bootstrap, "create_application", create)
-    monkeypatch.setattr(application_bootstrap, "compose_local_models", compose_models)
-    main_window.show.side_effect = show
-    qt_application.exec.side_effect = execute
-
-    exit_code = application_bootstrap.run(["lexlocal-test"])
-
-    assert exit_code == 0
+    assert application_bootstrap.run(["lexlocal-test"]) == 0
     assert events == [
-        "load_settings",
-        "configure_logging",
-        "initialize_persistence",
-        "compose_workspace_application",
-        "compose_local_models",
-        "create_application",
+        "settings",
+        "logging",
+        "persistence",
+        "security",
+        "qt_shell",
+        "compose_ui",
         "show_window",
-        "execute_event_loop",
-        "close_local_models",
+        "start_ui",
+        "event_loop",
+        "shutdown_ui",
     ]
+    ui.shutdown.assert_called_once_with()
     logger.info.assert_any_call("Application starting")
     logger.info.assert_any_call("Application stopped; exit_code=%d", 0)
 
 
-def test_local_model_composition_failure_prevents_ui_startup(
+def test_event_loop_failure_preserves_primary_and_still_shuts_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = make_settings(tmp_path)
-    create_application = Mock()
-    composition_error = RuntimeError("local model composition failed")
-
-    monkeypatch.setattr(application_bootstrap, "load_settings", lambda: settings)
-    monkeypatch.setattr(
-        application_bootstrap,
-        "configure_logging",
-        lambda _settings: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "initialize_persistence",
-        lambda _settings: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "compose_workspace_application",
-        lambda _settings, _factory: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "compose_local_models",
-        Mock(side_effect=composition_error),
-    )
-    monkeypatch.setattr(application_bootstrap, "create_application", create_application)
-
-    with pytest.raises(RuntimeError, match="local model composition failed"):
-        application_bootstrap.run([])
-
-    create_application.assert_not_called()
-
-
-def test_event_loop_failure_still_closes_local_models(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = make_settings(tmp_path)
-    local_models = Mock()
-    qt_application = Mock()
-    qt_application.exec.side_effect = RuntimeError("event loop failed")
-
-    monkeypatch.setattr(application_bootstrap, "load_settings", lambda: settings)
-    monkeypatch.setattr(
-        application_bootstrap,
-        "configure_logging",
-        lambda _settings: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "initialize_persistence",
-        lambda _settings: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "compose_workspace_application",
-        lambda _settings, _factory: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "compose_local_models",
-        lambda _settings, _factory: local_models,
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "create_application",
-        lambda _argv: (qt_application, Mock()),
+    events: list[str] = []
+    _logger, ui = _install_successful_startup(
+        monkeypatch,
+        tmp_path,
+        events,
+        event_loop_error=RuntimeError("event loop failed"),
     )
 
     with pytest.raises(RuntimeError, match="event loop failed"):
         application_bootstrap.run([])
 
-    local_models.close.assert_called_once_with()
+    ui.shutdown.assert_called_once_with()
 
 
-def test_cleanup_failure_does_not_replace_event_loop_failure(
+def test_worker_shutdown_failure_is_fatal_after_event_loop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = make_settings(tmp_path)
-    local_models = Mock()
-    local_models.close.side_effect = RuntimeError("cleanup failed")
-    qt_application = Mock()
-    qt_application.exec.side_effect = RuntimeError("event loop failed")
-
-    monkeypatch.setattr(application_bootstrap, "load_settings", lambda: settings)
-    monkeypatch.setattr(
-        application_bootstrap,
-        "configure_logging",
-        lambda _settings: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "initialize_persistence",
-        lambda _settings: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "compose_workspace_application",
-        lambda _settings, _factory: Mock(),
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "compose_local_models",
-        lambda _settings, _factory: local_models,
-    )
-    monkeypatch.setattr(
-        application_bootstrap,
-        "create_application",
-        lambda _argv: (qt_application, Mock()),
+    events: list[str] = []
+    _install_successful_startup(
+        monkeypatch,
+        tmp_path,
+        events,
+        shutdown_result=False,
     )
 
-    with pytest.raises(RuntimeError, match="event loop failed"):
+    with pytest.raises(RuntimeError, match="worker did not stop safely"):
         application_bootstrap.run([])
 
-    local_models.close.assert_called_once_with()
 
-
-def test_persistence_failure_prevents_ui_startup(
+@pytest.mark.parametrize("failing_stage", ["persistence", "security"])
+def test_pre_shell_fatal_stage_never_creates_normal_ui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failing_stage: str,
 ) -> None:
     settings = make_settings(tmp_path)
-    create_application = Mock()
-
+    create_shell = Mock()
+    compose_ui = Mock()
     monkeypatch.setattr(application_bootstrap, "load_settings", lambda: settings)
-    monkeypatch.setattr(application_bootstrap, "configure_logging", lambda actual_settings: Mock())
-    monkeypatch.setattr(application_bootstrap, "create_application", create_application)
+    monkeypatch.setattr(application_bootstrap, "configure_logging", lambda _value: Mock())
+    monkeypatch.setattr(application_bootstrap, "_qt_application", create_shell)
+    monkeypatch.setattr(application_bootstrap, "compose_ui_application", compose_ui)
 
-    def fail_initialization(actual_settings: AppSettings) -> None:
-        assert actual_settings is settings
-        raise RuntimeError("migration failed")
+    if failing_stage == "persistence":
+        monkeypatch.setattr(
+            application_bootstrap,
+            "initialize_persistence",
+            Mock(side_effect=RuntimeError("persistence failed")),
+        )
+    else:
+        monkeypatch.setattr(
+            application_bootstrap,
+            "initialize_persistence",
+            lambda _value: Mock(),
+        )
+        monkeypatch.setattr(
+            application_bootstrap,
+            "create_security_providers",
+            Mock(side_effect=RuntimeError("security failed")),
+        )
 
-    monkeypatch.setattr(
-        application_bootstrap,
-        "initialize_persistence",
-        fail_initialization,
-    )
+    with pytest.raises(RuntimeError, match=f"{failing_stage} failed"):
+        application_bootstrap.run([])
 
-    with pytest.raises(RuntimeError, match="migration failed"):
-        application_bootstrap.run(["lexlocal-test"])
-
-    create_application.assert_not_called()
+    create_shell.assert_not_called()
+    compose_ui.assert_not_called()
 
 
 def test_real_migration_history_failure_prevents_ui_startup(
@@ -264,7 +191,6 @@ def test_real_migration_history_failure_prevents_ui_startup(
     settings = make_settings(tmp_path)
     factory = initialize_persistence(settings)
     connection = factory.create()
-
     try:
         connection.execute(
             "UPDATE schema_migrations SET checksum_sha256 = ? WHERE version = 1",
@@ -273,16 +199,12 @@ def test_real_migration_history_failure_prevents_ui_startup(
     finally:
         connection.close()
 
-    create_application = Mock()
+    create_shell = Mock()
     monkeypatch.setattr(application_bootstrap, "load_settings", lambda: settings)
-    monkeypatch.setattr(
-        application_bootstrap,
-        "configure_logging",
-        lambda actual_settings: Mock(),
-    )
-    monkeypatch.setattr(application_bootstrap, "create_application", create_application)
+    monkeypatch.setattr(application_bootstrap, "configure_logging", lambda _value: Mock())
+    monkeypatch.setattr(application_bootstrap, "_qt_application", create_shell)
 
     with pytest.raises(MigrationHistoryError, match="checksum mismatch"):
         application_bootstrap.run(["lexlocal-test"])
 
-    create_application.assert_not_called()
+    create_shell.assert_not_called()

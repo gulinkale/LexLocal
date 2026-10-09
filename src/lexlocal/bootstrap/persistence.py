@@ -11,7 +11,7 @@ from lexlocal.application.workspaces import (
     ListWorkspaces,
     SelectWorkspace,
 )
-from lexlocal.bootstrap.security import create_security_providers
+from lexlocal.bootstrap.security import SecurityProviders, create_security_providers
 from lexlocal.bootstrap.settings import AppSettings
 from lexlocal.domain.identifiers import WorkspaceId
 from lexlocal.infrastructure.persistence.migration_runner import (
@@ -67,9 +67,12 @@ def initialize_persistence(
 def compose_workspace_application(
     settings: AppSettings,
     connection_factory: SQLiteConnectionFactory,
+    *,
+    security_providers: SecurityProviders | None = None,
 ) -> WorkspaceApplicationComposition:
     """Compose the synthetic workspace vertical slice after security validation."""
-    create_security_providers(settings)
+    if security_providers is None:
+        create_security_providers(settings)
     name_persistence = InsecureDevelopmentOnlyWorkspaceNamePersistence()
     active_scope = ActiveWorkspaceScope()
 

@@ -189,6 +189,35 @@ def test_success_composes_one_runtime_exact_aliases_and_atomic_commit(
     assert runtime.close_calls == 1
 
 
+def test_default_runtime_receives_exact_configured_cache_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = FakeRuntime()
+    initializer = Mock(return_value=runtime)
+    monkeypatch.setattr(
+        foundry_bootstrap.FoundryLocalRuntime,
+        "initialize",
+        initializer,
+    )
+    repository = FakeRepository()
+    install_unit_of_work(monkeypatch, repository)
+    app_settings = settings()
+
+    composition = foundry_bootstrap.compose_local_models(
+        app_settings,
+        Mock(),
+        model_id_factory=model_id_factory(),
+    )
+
+    initializer.assert_called_once_with(
+        app_name=app_settings.app_name,
+        model_cache_dir=app_settings.foundry_model_cache_dir,
+    )
+    assert runtime.close_calls == 0
+    composition.close()
+    assert runtime.close_calls == 1
+
+
 def test_existing_record_reuse_publishes_persisted_stable_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
